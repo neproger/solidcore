@@ -358,6 +358,7 @@ impl LineArc {
 pub mod adaptive;
 pub mod continuing;
 pub mod sweep;
+pub mod sweep3d;
 
 #[cfg(test)]
 mod tests {

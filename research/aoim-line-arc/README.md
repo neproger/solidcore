@@ -230,6 +230,66 @@ Conclusions:
 | `AdaptivePath` | bounds the miter; controlled, measurable path deviation; 2D-valid | changes the path and area; G0 at `A`; infeasible for tight bounds; requires explicit CAD authorisation | sharp/opposite tangents where the long wedge is unacceptable |
 | `solve_event_driven` | first topology-valid cut; minimal arc modification for a relaxed miter cap | miter may exceed a tight cap; same path/area change; G0 at `A` | when the miter cap can be relaxed to `~7` and minimal path modification is preferred |
 
+## 3D rectangular-profile sweep
+
+`src/sweep3d.rs` is the first true 3D experiment. It keeps the 2D strategies
+unchanged and extrudes a trimmed two-part AOIM region through a rectangular
+profile:
+
+- in-plane path normal coordinate `d in [d0, d1]`;
+- global height `z in [z0, z1]`;
+- planar Line–Arc path, fixed global `Z` section direction (no twist).
+
+Each body is a prism over its 2D region. The shared seam is the 2D seam polyline
+extruded vertically. The mesh uses one shared vertex pool; the line and arc
+bodies carry the seam faces with opposite orientations. The combined shell is
+obtained by deleting those internal seam faces, without a Boolean.
+
+Validation is topological and metric:
+
+- every edge of each body is used exactly twice in opposite directions;
+- the combined shell is closed;
+- the line and arc seam face sets match geometrically;
+- `line_volume = line_area * height`, `arc_volume = arc_area * height`;
+- `combined_volume = line + arc`;
+- `seam_area = seam_length_2d * height`;
+- top and bottom faces lie at `z1`/`z0`.
+
+Single-edge closure is not assumed: the builder quantizes vertices at `1e-12`
+before indexing, so the arc boundary endpoint and the seam endpoint share one
+3D vertex. Without that, the first/last seam quad was left unmatched and the
+combined shell failed to close.
+
+Results for `R = 4`, profile `[-2, 2]`, height `[-1, 1]` (height 2):
+
+| alpha | line volume | arc volume | combined | expected | seam faces | seam area |
+|---|---:|---:|---:|---:|---:|---:|
+| 30° | 160.080 | 16.684 | 176.765 | 176.765 | 400 | 8.254 |
+| 90° | 160.497 | 50.220 | 210.717 | 210.717 | 400 | 10.857 |
+| 150° | 166.048 | 88.348 | 254.396 | 254.396 | 400 | 24.134 |
+| 179° | 4443.547 | 540.753 | 4984.300 | 4984.300 | 400 | 470.429 |
+
+All tested pairs are closed, have no unmatched edges in the combined shell, and
+have seam faces shared by both bodies with opposite orientation. `179°` uses a
+longer incoming line (`line_length = 500`) because the hybrid seam extends far
+outside the joint.
+
+3D visualizations:
+
+```sh
+cargo run --example visualize3d
+```
+
+writes `out/3d.html`, `out/aoim-3d-90.svg`, `out/aoim-3d-150.svg` and local PNG
+previews. The two panels show the assembled bodies with the shared seam surface
+and the seam surface alone.
+
+**Current 3D limitations:** faceted planar quads for the sampled seam and arc;
+rectangular profile with fixed global `Z`; no twisted/moving frame; no arbitrary
+closed profile with holes; no true trimmed NURBS B-rep faces; no SMLib
+comparison yet; the adaptive/event-driven strategies are not yet extruded in
+3D (the first 3D test is the two-body hybrid pair).
+
 ## Counterexample: continuing-turn arc
 
 The opposite curvature is in `src/continuing.rs`. It has center `(−R sin α, −R cos α)` and offset radius `R − d`, so its AOIM existence interval is the other side:
@@ -247,7 +307,7 @@ cd research/aoim-line-arc
 cargo test
 ```
 
-The suite currently has **47 tests**. They cover:
+The suite currently has **56 tests**. They cover:
 
 - the original AOIM algebra, independent bisection, focus/directrix, existence limit, tangency, scaling, and invalid inputs;
 - hybrid seam construction, tangent parameter sign, C1 continuity at `P`, and boundary sharing;
@@ -258,6 +318,7 @@ The suite currently has **47 tests**. They cover:
 - the continuing-turn counterexample (`d_max`, forward tangent parameter, backward-ray distance, extension inside the line body);
 - adaptive-path cuts for `30/90/150/170/175/179°`, bounded miter and deviation, G1 at `Q`, G0 at `A`, far-endpoint preservation, dense independent path-deviation confirmation, and infeasible/tangency-required/no-cut cases;
 - event-driven first-valid cuts, the `150/179°` comparison against the miter-bounded cut, and the proof-by-parameter that the AOIM contact event lies before the finite arc;
+- 3D prism closure, shared seam face matching, top/bottom height placement, volume scaling with profile height, and the `30/90/150/170/175/179°` closed-pair checks;
 - adaptive three-part area balance, raster overlap/gap/symdiff, self-intersection, and the comparison that the adaptive miter is shorter than the hybrid wedge.
 
 The original checks that substituted `P(d)` back into the parabola were **self-confirming**: both sides came from the same two offset equations. They are kept, but the independent bisection, geometric bisector, and 2D region checks are the ones that can detect a branch, sign, or prolongation error.
@@ -266,6 +327,8 @@ The original checks that substituted `P(d)` back into the parabola were **self-c
 
 ```sh
 cargo run --example visualize
+cargo run --example visualize3d
+cargo run --example sweep3d
 cargo run --example metrics
 cargo run --example adaptive
 cargo run --example compare
@@ -283,6 +346,11 @@ arc` in purple, the event-driven first-valid cut in teal dashed, the line-line
 miter at `A`, the `Q` cross-section, and the three trimmed regions with metrics.
 The event-driven outlines are dashed teal; blue is the line body and orange is
 the remaining arc. The `out/` directory is gitignored.
+
+`visualize3d` writes `out/3d.html`, `out/aoim-3d-90.svg`, and
+`out/aoim-3d-150.svg`. The two panels show the assembled line/arc bodies with
+the shared seam surface highlighted in purple, then the seam surface alone.
+`sweep3d` prints the 3D volume/closure/seam table.
 
 `metrics` prints the hybrid area/raster table and connector kinematics.
 `adaptive` prints the cut search and adaptive region metrics for all angles.
@@ -309,8 +377,15 @@ points forward, not backward. A limit switch with a non-tangent connector can
 close the area but is not a linear sweep continuation. `AdaptivePath` is not
 yet implemented for the continuing-turn model.
 
-**Not yet validated:** Arc–Arc, spline segments, 3D frames, trimmed surface
-domains, B-rep topology/sewing, or performance relative to SMLib.
+**Confirmed for the 3D rectangular profile:** the two prismatic bodies close
+individually and after removing the internal seam faces; the shared seam face
+sets match with opposite orientation; volumes equal `2D area * height`; the
+seam area equals `2D seam length * height`; top/bottom faces are at the requested
+heights. The `30/90/150/170/175/179°` pairs pass.
+
+**Not yet validated:** arbitrary closed profiles with holes, twisted/moving
+frames, true trimmed NURBS B-rep faces, B-rep sewing with SolidCore, adaptive
+3D extrusion, or performance relative to SMLib.
 
 **Next:**
 
@@ -320,9 +395,14 @@ domains, B-rep topology/sewing, or performance relative to SMLib.
    segment and the remaining right-curving arc still produce valid regions.
 3. For the continuing-turn side, compare alternatives: trim the line body
    instead of the arc, or allow a ruled (non-linear) local connector.
-4. Extend the 2D region test to Arc–Arc and a moving frame.
-5. Only then attempt two neighbouring B-rep pieces with shared topology.
+4. Extend the 3D extrusion to the adaptive three-part regions (line, straight,
+   arc) with two shared interfaces.
+5. Replace faceted seam/top/bottom polygons with true trimmed surfaces and
+   attempt B-rep sewing with shared topology.
+6. Extend the 2D region test to Arc–Arc and a moving frame; then compare with
+   SMLib on identical inputs.
 
 **No upstream PR is intended until that evidence exists.**
+
 
 
