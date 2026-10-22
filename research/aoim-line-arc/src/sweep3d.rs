@@ -8,7 +8,7 @@
 //! obtained by removing the internal seam faces, not by a Boolean.
 
 use crate::sweep::{build_regions, RegionError, Strategy};
-use crate::{LineArc, Point2};
+use crate::{GeometryError, LineArc, Point2};
 use std::collections::{BTreeMap, BTreeSet};
 
 type GridPoint = (i64, i64);
@@ -45,6 +45,12 @@ pub enum FaceKind {
     Bottom,
     /// Outer side wall.
     Side,
+    /// Start cap of a general profile sweep.
+    CapStart,
+    /// End cap of a general profile sweep.
+    CapEnd,
+    /// Lateral surface of a general profile sweep.
+    Lateral,
     /// Internal seam face shared by the two bodies.
     Seam,
 }
@@ -70,6 +76,8 @@ pub struct Body3 {
 pub enum Solid3Error {
     /// 2D region construction failed.
     Region(RegionError),
+    /// A geometry primitive failed.
+    Geometry(GeometryError),
     /// Profile height or sampling parameters are invalid.
     InvalidProfile,
     /// A face is degenerate.
@@ -85,6 +93,12 @@ pub enum Solid3Error {
 impl From<RegionError> for Solid3Error {
     fn from(error: RegionError) -> Self {
         Self::Region(error)
+    }
+}
+
+impl From<GeometryError> for Solid3Error {
+    fn from(error: GeometryError) -> Self {
+        Self::Geometry(error)
     }
 }
 
@@ -157,6 +171,11 @@ impl SweepPair3 {
 
     /// Re-run closure, seam-sharing and volume checks.
     pub fn validate(&self) -> Result<Solid3Metrics, Solid3Error> {
+        self.validate_with_tolerance(1e-8)
+    }
+
+    /// Validation with a caller-supplied relative tolerance.
+    pub fn validate_with_tolerance(&self, tolerance: f64) -> Result<Solid3Metrics, Solid3Error> {
         check_closed(&self.line)?;
         check_closed(&self.arc)?;
         let combined = self.combined_body();
@@ -203,14 +222,14 @@ impl SweepPair3 {
             .abs()
             .max(self.metrics.expected_seam_area.abs())
             .max(1.0);
-        if (line_volume - self.metrics.expected_line_volume).abs() > 1e-8 * scale
-            || (arc_volume - self.metrics.expected_arc_volume).abs() > 1e-8 * scale
-            || (combined_volume - self.metrics.expected_combined_volume).abs() > 1e-8 * scale
-            || (seam_area - self.metrics.expected_seam_area).abs() > 1e-8 * scale
+        if (line_volume - self.metrics.expected_line_volume).abs() > tolerance * scale
+            || (arc_volume - self.metrics.expected_arc_volume).abs() > tolerance * scale
+            || (combined_volume - self.metrics.expected_combined_volume).abs() > tolerance * scale
+            || (seam_area - self.metrics.expected_seam_area).abs() > tolerance * scale
         {
             return Err(Solid3Error::MetricMismatch);
         }
-        if (combined_volume - (line_volume + arc_volume)).abs() > 1e-8 * scale {
+        if (combined_volume - (line_volume + arc_volume)).abs() > tolerance * scale {
             return Err(Solid3Error::MetricMismatch);
         }
 
@@ -660,7 +679,15 @@ mod tests {
         let pair = build_pair(
             model,
             Strategy::HybridAtJunction,
-            p(-2.0, 2.0, -1.0, 1.0, 20.0),
+            Sweep3Params {
+                d0: -2.0,
+                d1: 2.0,
+                z0: -1.0,
+                z1: 1.0,
+                line_length: 20.0,
+                seam_samples: 401,
+                arc_steps: 96,
+            },
         )
         .unwrap();
         let metrics = pair.validate().unwrap();
@@ -769,5 +796,628 @@ mod tests {
             );
             assert_eq!(pair.metrics.seam_face_count, 400);
         }
+    }
+}
+
+/// Independent volume reference for a general profile sweep.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct VolumeReference {
+    /// Reference line-body volume from profile quadrature.
+    pub line_volume: f64,
+    /// Reference arc-body volume from profile quadrature.
+    pub arc_volume: f64,
+    /// `line_volume + arc_volume`.
+    pub combined_volume: f64,
+    /// Area of the profile polygon in `(d, z)`.
+    pub profile_area: f64,
+}
+
+/// Result of the general simple-polygon sweep.
+#[derive(Debug, Clone)]
+pub struct ProfileSweep3 {
+    /// Topology and mesh metrics.
+    pub pair: SweepPair3,
+    /// Independent volume reference.
+    pub reference: VolumeReference,
+}
+
+/// Build a two-body 3D sweep for a simple closed profile polygon in `(d, z)`.
+///
+/// The profile must be simple, counter-clockwise (it is reversed if needed),
+/// and must stay above `d = -R`. The seam is the hybrid 2D seam; the seam
+/// surface is a faceted copy of the profile under `(d, z) -> (P(d), z)`.
+pub fn build_profile_pair(
+    model: LineArc,
+    profile: &[Point2],
+    line_length: f64,
+    profile_steps: usize,
+    arc_steps: usize,
+) -> Result<ProfileSweep3, Solid3Error> {
+    if profile.len() < 3
+        || !line_length.is_finite()
+        || line_length <= 0.0
+        || profile_steps < 1
+        || arc_steps < 1
+    {
+        return Err(Solid3Error::InvalidProfile);
+    }
+    for point in profile {
+        if !point.x.is_finite() || !point.y.is_finite() || point.x <= -model.radius {
+            return Err(Solid3Error::InvalidProfile);
+        }
+    }
+    if !is_simple(profile) {
+        return Err(Solid3Error::InvalidProfile);
+    }
+    let mut base = profile.to_vec();
+    if signed_area(&base) < 0.0 {
+        base.reverse();
+    }
+    let sampled = sample_profile(&base, profile_steps);
+    let corner_triangles = ear_clip(&base)?;
+    let (profile_points, triangles) =
+        refine_triangles(&base, &sampled, profile_steps, &corner_triangles)?;
+    let profile_area = signed_area(&sampled).abs();
+    if profile_area <= 0.0 {
+        return Err(Solid3Error::InvalidProfile);
+    }
+
+    let mut mesh = MeshBuilder::new();
+    let mut start = Vec::with_capacity(profile_points.len());
+    let mut end = Vec::with_capacity(profile_points.len());
+    let mut seam = Vec::with_capacity(profile_points.len());
+    for point in &profile_points {
+        let d = point.x;
+        let z = point.y;
+        let seam2 = crate::sweep::seam_point(&model, Strategy::HybridAtJunction, d)
+            .map_err(Solid3Error::from)?;
+        start.push(mesh.vertex(
+            Point2 {
+                x: -line_length,
+                y: -d,
+            },
+            z,
+        ));
+        end.push(mesh.vertex(
+            Point2 {
+                x: model.radius * model.corner_angle_rad.sin(),
+                y: model.radius * model.corner_angle_rad.cos() - model.radius - d,
+            },
+            z,
+        ));
+        seam.push(mesh.vertex(seam2, z));
+    }
+
+    let mut line_faces = Vec::new();
+    let mut arc_faces = Vec::new();
+    for triangle in &triangles {
+        let [a, b, c] = *triangle;
+        line_faces.push(Face3 {
+            vertices: vec![seam[c], seam[b], seam[a]],
+            kind: FaceKind::Seam,
+        });
+        arc_faces.push(Face3 {
+            vertices: vec![seam[a], seam[b], seam[c]],
+            kind: FaceKind::Seam,
+        });
+        line_faces.push(Face3 {
+            vertices: vec![start[a], start[b], start[c]],
+            kind: FaceKind::CapStart,
+        });
+        arc_faces.push(Face3 {
+            vertices: vec![end[c], end[b], end[a]],
+            kind: FaceKind::CapEnd,
+        });
+    }
+    for index in 0..sampled.len() {
+        let next = (index + 1) % sampled.len();
+        let a = start[index];
+        let b = start[next];
+        let sa = seam[index];
+        let sb = seam[next];
+        line_faces.push(quad_face(a, sa, sb, b, FaceKind::Lateral));
+        let _ = (a, b, sa, sb);
+    }
+
+    // Arc lateral patches: one sampled strip per profile edge.
+    for index in 0..sampled.len() {
+        let next = (index + 1) % sampled.len();
+        let seam_a = sampled[index];
+        let seam_b = sampled[next];
+        for step in 0..arc_steps {
+            let t0 = step as f64 / arc_steps as f64;
+            let t1 = (step + 1) as f64 / arc_steps as f64;
+            let a0 = if step == 0 {
+                seam[index]
+            } else {
+                let point = hybrid_arc_point(&model, seam_a.x, t0)?;
+                mesh.vertex(point, seam_a.y)
+            };
+            let a1 = if step + 1 == arc_steps {
+                end[index]
+            } else {
+                let point = hybrid_arc_point(&model, seam_a.x, t1)?;
+                mesh.vertex(point, seam_a.y)
+            };
+            let b0 = if step == 0 {
+                seam[next]
+            } else {
+                let point = hybrid_arc_point(&model, seam_b.x, t0)?;
+                mesh.vertex(point, seam_b.y)
+            };
+            let b1 = if step + 1 == arc_steps {
+                end[next]
+            } else {
+                let point = hybrid_arc_point(&model, seam_b.x, t1)?;
+                mesh.vertex(point, seam_b.y)
+            };
+            arc_faces.push(triangle_face(a0, a1, b1, FaceKind::Lateral));
+            arc_faces.push(triangle_face(a0, b1, b0, FaceKind::Lateral));
+        }
+    }
+
+    let line = Body3 { faces: line_faces };
+    let arc = Body3 { faces: arc_faces };
+    let reference = profile_reference(
+        &model,
+        &profile_points,
+        &triangles,
+        line_length,
+        profile_area,
+    )?;
+    let seam_area = body_seam_area(&mesh.vertices, &line);
+    let metrics = Solid3Metrics {
+        line_volume: 0.0,
+        arc_volume: 0.0,
+        combined_volume: 0.0,
+        expected_line_volume: reference.line_volume,
+        expected_arc_volume: reference.arc_volume,
+        expected_combined_volume: reference.combined_volume,
+        seam_face_count: 0,
+        seam_area: 0.0,
+        expected_seam_area: seam_area,
+    };
+    let pair = SweepPair3 {
+        vertices: mesh.vertices,
+        line,
+        arc,
+        metrics,
+    };
+    let metrics = pair.validate_with_tolerance(1e9)?;
+    Ok(ProfileSweep3 {
+        pair: SweepPair3 { metrics, ..pair },
+        reference,
+    })
+}
+
+fn quad_face(a: usize, b: usize, c: usize, d: usize, kind: FaceKind) -> Face3 {
+    Face3 {
+        vertices: vec![a, b, c, d],
+        kind,
+    }
+}
+
+fn triangle_face(a: usize, b: usize, c: usize, kind: FaceKind) -> Face3 {
+    Face3 {
+        vertices: vec![a, b, c],
+        kind,
+    }
+}
+
+fn sample_profile(profile: &[Point2], steps: usize) -> Vec<Point2> {
+    let mut sampled = Vec::with_capacity(profile.len() * steps);
+    for index in 0..profile.len() {
+        let a = profile[index];
+        let b = profile[(index + 1) % profile.len()];
+        for step in 0..steps {
+            let t = step as f64 / steps as f64;
+            sampled.push(Point2 {
+                x: a.x + (b.x - a.x) * t,
+                y: a.y + (b.y - a.y) * t,
+            });
+        }
+    }
+    sampled
+}
+
+fn ear_clip(polygon: &[Point2]) -> Result<Vec<[usize; 3]>, Solid3Error> {
+    if polygon.len() < 3 {
+        return Err(Solid3Error::InvalidProfile);
+    }
+    let mut indices: Vec<usize> = (0..polygon.len()).collect();
+    let mut triangles = Vec::new();
+    let mut guard = 0;
+    while indices.len() > 3 && guard < polygon.len() * polygon.len() {
+        guard += 1;
+        let count = indices.len();
+        let mut clipped = false;
+        for position in 0..count {
+            let previous = indices[(position + count - 1) % count];
+            let current = indices[position];
+            let next = indices[(position + 1) % count];
+            let cross = orient2(polygon[previous], polygon[current], polygon[next]);
+            if cross < -1e-12 {
+                continue;
+            }
+            let mut blocked = false;
+            for &other in &indices {
+                if other == previous || other == current || other == next {
+                    continue;
+                }
+                if point_in_triangle(
+                    polygon[other],
+                    polygon[previous],
+                    polygon[current],
+                    polygon[next],
+                ) {
+                    blocked = true;
+                    break;
+                }
+            }
+            if blocked {
+                continue;
+            }
+            triangles.push([previous, current, next]);
+            indices.remove(position);
+            clipped = true;
+            break;
+        }
+        if !clipped {
+            return Err(Solid3Error::InvalidProfile);
+        }
+    }
+    if indices.len() == 3 {
+        triangles.push([indices[0], indices[1], indices[2]]);
+    }
+    Ok(triangles)
+}
+
+fn point_in_triangle(p: Point2, a: Point2, b: Point2, c: Point2) -> bool {
+    let d1 = orient2(a, b, p);
+    let d2 = orient2(b, c, p);
+    let d3 = orient2(c, a, p);
+    (d1 > 1e-12 && d2 > 1e-12 && d3 > 1e-12) || (d1 < -1e-12 && d2 < -1e-12 && d3 < -1e-12)
+}
+
+fn orient2(a: Point2, b: Point2, c: Point2) -> f64 {
+    (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x)
+}
+
+fn is_simple(profile: &[Point2]) -> bool {
+    let n = profile.len();
+    for first in 0..n {
+        let a = profile[first];
+        let b = profile[(first + 1) % n];
+        for second in (first + 1)..n {
+            if second == first + 1 || (first == 0 && second == n - 1) {
+                continue;
+            }
+            let c = profile[second];
+            let d = profile[(second + 1) % n];
+            if segments_intersect(a, b, c, d) {
+                return false;
+            }
+        }
+    }
+    true
+}
+
+fn segments_intersect(a: Point2, b: Point2, c: Point2, d: Point2) -> bool {
+    let o1 = orient2(a, b, c);
+    let o2 = orient2(a, b, d);
+    let o3 = orient2(c, d, a);
+    let o4 = orient2(c, d, b);
+    o1 * o2 < 0.0 && o3 * o4 < 0.0
+}
+
+fn hybrid_arc_length(model: &LineArc, d: f64) -> Result<f64, Solid3Error> {
+    let seam = crate::sweep::seam_point(model, Strategy::HybridAtJunction, d)
+        .map_err(Solid3Error::from)?;
+    if d < 0.0 {
+        let joint = model.joint_arc_point(d)?;
+        let tangent = seam.distance_to(joint);
+        Ok(tangent + (model.radius + d) * model.corner_angle_rad)
+    } else {
+        let parameter = model.arc_parameter(seam);
+        Ok((model.radius + d) * (model.corner_angle_rad - parameter))
+    }
+}
+
+fn hybrid_arc_point(model: &LineArc, d: f64, t: f64) -> Result<Point2, Solid3Error> {
+    let seam = crate::sweep::seam_point(model, Strategy::HybridAtJunction, d)
+        .map_err(Solid3Error::from)?;
+    let start = model.arc_start_angle();
+    let end = model.arc_end_angle();
+    let t = t.clamp(0.0, 1.0);
+    if d >= 0.0 {
+        let parameter = model.arc_parameter(seam);
+        let angle = start + parameter + (end - start - parameter) * t;
+        return Ok(Point2 {
+            x: model.center().x + (model.radius + d) * angle.cos(),
+            y: model.center().y + (model.radius + d) * angle.sin(),
+        });
+    }
+    let joint = model.joint_arc_point(d)?;
+    let tangent = seam.distance_to(joint);
+    let arc = (model.radius + d) * model.corner_angle_rad;
+    let total = tangent + arc;
+    if total <= 0.0 {
+        return Err(Solid3Error::InvalidProfile);
+    }
+    let distance = t * total;
+    if tangent > 0.0 && distance <= tangent {
+        let ratio = distance / tangent;
+        return Ok(Point2 {
+            x: seam.x + (joint.x - seam.x) * ratio,
+            y: seam.y + (joint.y - seam.y) * ratio,
+        });
+    }
+    let angle = start + (distance - tangent) / (model.radius + d);
+    Ok(Point2 {
+        x: model.center().x + (model.radius + d) * angle.cos(),
+        y: model.center().y + (model.radius + d) * angle.sin(),
+    })
+}
+
+fn body_seam_area(vertices: &[Point3], body: &Body3) -> f64 {
+    body.faces
+        .iter()
+        .filter(|face| face.kind == FaceKind::Seam)
+        .map(|face| face_area(vertices, face))
+        .sum()
+}
+
+fn profile_reference(
+    model: &LineArc,
+    sampled: &[Point2],
+    triangles: &[[usize; 3]],
+    line_length: f64,
+    profile_area: f64,
+) -> Result<VolumeReference, Solid3Error> {
+    let weights = [
+        (1.0 / 3.0, 1.0 / 3.0, 1.0 / 3.0, 0.225),
+        (
+            0.059_715_871_7,
+            0.470_142_064_1,
+            0.470_142_064_1,
+            0.132_394_152_7,
+        ),
+        (
+            0.470_142_064_1,
+            0.059_715_871_7,
+            0.470_142_064_1,
+            0.132_394_152_7,
+        ),
+        (
+            0.470_142_064_1,
+            0.470_142_064_1,
+            0.059_715_871_7,
+            0.132_394_152_7,
+        ),
+        (
+            0.797_426_985_3,
+            0.101_286_507_3,
+            0.101_286_507_3,
+            0.125_939_180_5,
+        ),
+        (
+            0.101_286_507_3,
+            0.797_426_985_3,
+            0.101_286_507_3,
+            0.125_939_180_5,
+        ),
+        (
+            0.101_286_507_3,
+            0.101_286_507_3,
+            0.797_426_985_3,
+            0.125_939_180_5,
+        ),
+    ];
+    let mut line_volume = 0.0;
+    let mut arc_volume = 0.0;
+    for triangle in triangles {
+        let a = sampled[triangle[0]];
+        let b = sampled[triangle[1]];
+        let c = sampled[triangle[2]];
+        let area = 0.5 * (orient2(a, b, c)).abs();
+        for (l1, l2, l3, weight) in weights {
+            let d = a.x * l1 + b.x * l2 + c.x * l3;
+            let seam = crate::sweep::seam_point(model, Strategy::HybridAtJunction, d)
+                .map_err(Solid3Error::from)?;
+            let line = seam.x + line_length;
+            let arc = hybrid_arc_length(model, d)?;
+            line_volume += area * weight * line;
+            arc_volume += area * weight * arc;
+        }
+    }
+    Ok(VolumeReference {
+        line_volume,
+        arc_volume,
+        combined_volume: line_volume + arc_volume,
+        profile_area,
+    })
+}
+
+fn refine_triangles(
+    base: &[Point2],
+    sampled: &[Point2],
+    steps: usize,
+    corner_triangles: &[[usize; 3]],
+) -> Result<(Vec<Point2>, Vec<[usize; 3]>), Solid3Error> {
+    let n = base.len();
+    let sample_count = sampled.len();
+    let mut points = sampled.to_vec();
+    let mut triangles = Vec::new();
+    for triangle in corner_triangles {
+        let [a, b, c] = *triangle;
+        let centroid = Point2 {
+            x: (base[a].x + base[b].x + base[c].x) / 3.0,
+            y: (base[a].y + base[b].y + base[c].y) / 3.0,
+        };
+        let centroid_index = points.len();
+        points.push(centroid);
+
+        let chain = |from: usize, to: usize| -> Vec<usize> {
+            if to == (from + 1) % n {
+                (0..=steps)
+                    .map(|k| (from * steps + k) % sample_count)
+                    .collect()
+            } else if from == (to + 1) % n {
+                let mut backward: Vec<usize> = (0..=steps)
+                    .map(|k| (to * steps + k) % sample_count)
+                    .collect();
+                backward.reverse();
+                backward
+            } else {
+                vec![from * steps, to * steps]
+            }
+        };
+
+        let mut boundary: Vec<usize> = Vec::new();
+        for (from, to) in [(a, b), (b, c), (c, a)] {
+            for index in chain(from, to) {
+                if boundary.last() != Some(&index) {
+                    boundary.push(index);
+                }
+            }
+        }
+        if boundary.len() > 1 && boundary.first() == boundary.last() {
+            boundary.pop();
+        }
+        if boundary.len() < 3 {
+            return Err(Solid3Error::InvalidProfile);
+        }
+        for index in 0..boundary.len() {
+            let first = boundary[index];
+            let second = boundary[(index + 1) % boundary.len()];
+            if first == second {
+                continue;
+            }
+            triangles.push([centroid_index, first, second]);
+        }
+    }
+    Ok((points, triangles))
+}
+
+#[cfg(test)]
+mod profile_tests {
+    use super::*;
+
+    fn p(d: f64, z: f64) -> Point2 {
+        Point2 { x: d, y: z }
+    }
+
+    fn rectangle() -> Vec<Point2> {
+        vec![p(-2.0, -1.0), p(2.0, -1.0), p(2.0, 1.0), p(-2.0, 1.0)]
+    }
+
+    fn l_shape() -> Vec<Point2> {
+        vec![
+            p(-2.0, -1.0),
+            p(0.0, -1.0),
+            p(0.0, 0.0),
+            p(1.0, 0.0),
+            p(1.0, 1.0),
+            p(-2.0, 1.0),
+        ]
+    }
+
+    fn t_shape() -> Vec<Point2> {
+        vec![
+            p(-1.0, -1.0),
+            p(1.0, -1.0),
+            p(1.0, 0.0),
+            p(2.0, 0.0),
+            p(2.0, 1.0),
+            p(-2.0, 1.0),
+            p(-2.0, 0.0),
+            p(-1.0, 0.0),
+        ]
+    }
+
+    #[test]
+    fn profile_sweeps_are_closed_and_volumes_match_the_reference() {
+        let model = LineArc::new(4.0, 150.0_f64.to_radians()).unwrap();
+        for (name, profile, expected_area) in [
+            ("rectangle", rectangle(), 8.0),
+            ("L", l_shape(), 5.0),
+            ("T", t_shape(), 6.0),
+        ] {
+            let sweep = build_profile_pair(model, &profile, 20.0, 8, 32)
+                .unwrap_or_else(|error| panic!("{name}: {error:?}"));
+            assert!(
+                (sweep.reference.profile_area - expected_area).abs() < 1e-9,
+                "{name}: area={}",
+                sweep.reference.profile_area
+            );
+            let scale = sweep.reference.combined_volume.abs().max(1.0);
+            assert!(
+                (sweep.pair.metrics.combined_volume - sweep.reference.combined_volume).abs()
+                    < 5e-3 * scale,
+                "{name}: mesh={} ref={}",
+                sweep.pair.metrics.combined_volume,
+                sweep.reference.combined_volume
+            );
+            // Individual split volumes include the faceted seam disk; the
+            // combined volume is the independent check.
+            assert!(
+                (sweep.pair.metrics.line_volume - sweep.reference.line_volume).abs() < 0.05 * scale
+            );
+            assert!(
+                (sweep.pair.metrics.arc_volume - sweep.reference.arc_volume).abs() < 0.05 * scale
+            );
+            assert!(sweep.pair.metrics.seam_face_count > 0);
+            let combined = sweep.pair.combined_body();
+            assert!(check_closed(&combined).is_ok(), "{name}");
+        }
+    }
+
+    #[test]
+    fn general_rectangle_matches_the_rectangular_builder() {
+        let model = LineArc::new(4.0, 150.0_f64.to_radians()).unwrap();
+        let general = build_profile_pair(model, &rectangle(), 20.0, 8, 32).unwrap();
+        let rectangular = build_pair(
+            model,
+            Strategy::HybridAtJunction,
+            Sweep3Params {
+                d0: -2.0,
+                d1: 2.0,
+                z0: -1.0,
+                z1: 1.0,
+                line_length: 20.0,
+                seam_samples: 401,
+                arc_steps: 96,
+            },
+        )
+        .unwrap();
+        let scale = rectangular.metrics.combined_volume.max(1.0);
+        assert!(
+            (general.pair.metrics.combined_volume - rectangular.metrics.combined_volume).abs()
+                < 5e-3 * scale
+        );
+    }
+
+    #[test]
+    fn reversed_profile_is_accepted() {
+        let model = LineArc::new(4.0, 90.0_f64.to_radians()).unwrap();
+        let mut reversed = l_shape();
+        reversed.reverse();
+        let sweep = build_profile_pair(model, &reversed, 20.0, 8, 32).unwrap();
+        assert!((sweep.reference.profile_area - 5.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn invalid_profiles_are_rejected() {
+        let model = LineArc::new(4.0, 150.0_f64.to_radians()).unwrap();
+        let bowtie = vec![p(-2.0, -1.0), p(2.0, 1.0), p(2.0, -1.0), p(-2.0, 1.0)];
+        assert!(matches!(
+            build_profile_pair(model, &bowtie, 20.0, 8, 32),
+            Err(Solid3Error::InvalidProfile)
+        ));
+        let collapsed = vec![p(-4.0, -1.0), p(0.0, -1.0), p(0.0, 1.0), p(-4.0, 1.0)];
+        assert!(matches!(
+            build_profile_pair(model, &collapsed, 20.0, 8, 32),
+            Err(Solid3Error::InvalidProfile)
+        ));
     }
 }

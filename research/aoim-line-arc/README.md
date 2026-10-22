@@ -284,11 +284,49 @@ writes `out/3d.html`, `out/aoim-3d-90.svg`, `out/aoim-3d-150.svg` and local PNG
 previews. The two panels show the assembled bodies with the shared seam surface
 and the seam surface alone.
 
+### General simple polygon profile
+
+`build_profile_pair` generalizes the two-body test from a rectangle to a
+simple closed polygon in `(d, z)`.
+
+The profile boundary is sampled, the boundary is refined into a triangulation
+that keeps every sample (ear clipping plus a centroid fan per corner triangle),
+and the seam surface is a faceted copy of the profile under
+`(d, z) -> (P(d), z)`. The line body is closed by the start cap, its lateral
+swept surfaces and the seam disk; the arc body by the seam disk, its hybrid
+lateral surfaces (tangent extension for `d < 0`, then the circle) and the end
+cap.
+
+The independent volume reference is a 7-point quadrature of
+
+- `line = P_x(d) + line_length`,
+- `arc = tangent_length(d) + (R+d) α` for `d < 0`,
+- `arc = (R+d)(end_angle − φ_seam(d))` for `d ≥ 0`
+
+over the profile area. The combined mesh volume is compared with this reference;
+the individual line/arc split is also reported but is expected to differ by a
+few percent because it depends on the faceted seam disk.
+
+| profile | area | mesh combined | reference combined | error |
+|---|---:|---:|---:|---:|
+| rectangle | 8.000 | 254.413 | 254.339 | +0.03 % |
+| L | 5.000 | 170.313 | 170.317 | −0.002 % |
+| T | 6.000 | 189.135 | 189.107 | +0.015 % |
+
+All three are closed and have shared seam faces. The general rectangle matches
+the original rectangular builder; reversed profiles are accepted; bow-tie and
+`d ≤ −R` profiles are rejected.
+
+The new views are `out/aoim-3d-L.svg` and `out/aoim-3d-T.svg` (also in
+`out/3d.html`). They show the L/T cross-section carried through the line and
+arc bodies with the shared seam surface isolated in the second panel.
+
 **Current 3D limitations:** faceted planar quads for the sampled seam and arc;
-rectangular profile with fixed global `Z`; no twisted/moving frame; no arbitrary
-closed profile with holes; no true trimmed NURBS B-rep faces; no SMLib
-comparison yet; the adaptive/event-driven strategies are not yet extruded in
-3D (the first 3D test is the two-body hybrid pair).
+simple polygons only (no holes); fixed global `Z`; no twisted/moving frame; no
+true trimmed NURBS B-rep faces; no SMLib comparison yet; the
+adaptive/event-driven strategies are not yet extruded in 3D. The seam disk is a
+faceted copy of the profile, so individual line/arc volume split is approximate
+even when the combined volume is accurate.
 
 ## Counterexample: continuing-turn arc
 
@@ -307,7 +345,7 @@ cd research/aoim-line-arc
 cargo test
 ```
 
-The suite currently has **56 tests**. They cover:
+The suite currently has **60 tests**. They cover:
 
 - the original AOIM algebra, independent bisection, focus/directrix, existence limit, tangency, scaling, and invalid inputs;
 - hybrid seam construction, tangent parameter sign, C1 continuity at `P`, and boundary sharing;
@@ -319,6 +357,8 @@ The suite currently has **56 tests**. They cover:
 - adaptive-path cuts for `30/90/150/170/175/179°`, bounded miter and deviation, G1 at `Q`, G0 at `A`, far-endpoint preservation, dense independent path-deviation confirmation, and infeasible/tangency-required/no-cut cases;
 - event-driven first-valid cuts, the `150/179°` comparison against the miter-bounded cut, and the proof-by-parameter that the AOIM contact event lies before the finite arc;
 - 3D prism closure, shared seam face matching, top/bottom height placement, volume scaling with profile height, and the `30/90/150/170/175/179°` closed-pair checks;
+- general L/T profile closure, shared seam disk, combined-volume quadrature, reversed-profile acceptance, and invalid-profile rejection;
+- general L/T profile closure, shared seam disk, combined-volume quadrature, reversed-profile acceptance, and invalid-profile rejection;
 - adaptive three-part area balance, raster overlap/gap/symdiff, self-intersection, and the comparison that the adaptive miter is shorter than the hybrid wedge.
 
 The original checks that substituted `P(d)` back into the parabola were **self-confirming**: both sides came from the same two offset equations. They are kept, but the independent bisection, geometric bisector, and 2D region checks are the ones that can detect a branch, sign, or prolongation error.
@@ -350,7 +390,8 @@ the remaining arc. The `out/` directory is gitignored.
 `visualize3d` writes `out/3d.html`, `out/aoim-3d-90.svg`, and
 `out/aoim-3d-150.svg`. The two panels show the assembled line/arc bodies with
 the shared seam surface highlighted in purple, then the seam surface alone.
-`sweep3d` prints the 3D volume/closure/seam table.
+`sweep3d` prints the rectangular 3D volume/closure/seam table.
+`profile3d` prints the rectangle/L/T general-profile reference comparison.
 
 `metrics` prints the hybrid area/raster table and connector kinematics.
 `adaptive` prints the cut search and adaptive region metrics for all angles.
@@ -383,7 +424,12 @@ sets match with opposite orientation; volumes equal `2D area * height`; the
 seam area equals `2D seam length * height`; top/bottom faces are at the requested
 heights. The `30/90/150/170/175/179°` pairs pass.
 
-**Not yet validated:** arbitrary closed profiles with holes, twisted/moving
+**Confirmed for a general simple polygon profile:** rectangle, L and T profiles
+produce closed line/arc bodies sharing one seam disk; the combined volume matches
+the independent profile quadrature (`<0.05%` for the tested profiles); reversed
+profiles are accepted and bow-tie/`d <= -R` profiles are rejected.
+
+**Not yet validated:** profiles with holes or self-intersections, twisted/moving
 frames, true trimmed NURBS B-rep faces, B-rep sewing with SolidCore, adaptive
 3D extrusion, or performance relative to SMLib.
 
@@ -403,6 +449,10 @@ frames, true trimmed NURBS B-rep faces, B-rep sewing with SolidCore, adaptive
    SMLib on identical inputs.
 
 **No upstream PR is intended until that evidence exists.**
+
+
+
+
 
 
 

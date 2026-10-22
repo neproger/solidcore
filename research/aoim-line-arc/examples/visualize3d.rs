@@ -8,9 +8,9 @@
 
 use aoim_line_arc_research::sweep::Strategy;
 use aoim_line_arc_research::sweep3d::{
-    build_pair, Face3, FaceKind, Point3, Sweep3Params, SweepPair3,
+    build_pair, build_profile_pair, Face3, FaceKind, Point3, Sweep3Params, SweepPair3,
 };
-use aoim_line_arc_research::LineArc;
+use aoim_line_arc_research::{LineArc, Point2};
 use std::fmt::Write as _;
 use std::fs;
 use std::path::Path;
@@ -98,10 +98,15 @@ fn draw_bodies(canvas: &mut String, view: &View3, pair: &SweepPair3) {
         } else {
             0.10
         };
+        let stroke = if face.kind == FaceKind::Lateral {
+            0.0
+        } else {
+            0.8
+        };
         let _ = write!(
             canvas,
             "{}",
-            face_svg(view, &pair.vertices, face, color, opacity, color, 0.8)
+            face_svg(view, &pair.vertices, face, color, opacity, color, stroke)
         );
     }
     for face in &pair.arc.faces {
@@ -115,10 +120,15 @@ fn draw_bodies(canvas: &mut String, view: &View3, pair: &SweepPair3) {
         } else {
             0.10
         };
+        let stroke = if face.kind == FaceKind::Lateral {
+            0.0
+        } else {
+            0.8
+        };
         let _ = write!(
             canvas,
             "{}",
-            face_svg(view, &pair.vertices, face, color, opacity, color, 0.8)
+            face_svg(view, &pair.vertices, face, color, opacity, color, stroke)
         );
     }
 }
@@ -129,7 +139,7 @@ fn draw_edge_loops(canvas: &mut String, view: &View3, pair: &SweepPair3) {
         let _ = writeln!(
             canvas,
             "<polyline points=\"{coords}\" fill=\"none\" stroke=\"#5b2d91\" \
-             stroke-width=\"1.8\" stroke-linejoin=\"round\"/>"
+             stroke-width=\"1.2\" stroke-linejoin=\"round\"/>"
         );
     }
 }
@@ -144,9 +154,9 @@ fn draw_seam_only(canvas: &mut String, view: &View3, pair: &SweepPair3) {
     }
 }
 
-fn render(pair: &SweepPair3, degrees: f64) -> String {
+fn render(pair: &SweepPair3, degrees: f64, profile_name: &str) -> String {
     let mut canvas = String::new();
-    let title = format!("AOIM 3D sweep, Line-Arc {degrees:.0} deg, rectangular profile");
+    let title = format!("AOIM 3D sweep, Line-Arc {degrees:.0} deg, {profile_name} profile");
     let panel1 = 30.0;
     let panel2 = 30.0 + PANEL_HEIGHT + 40.0;
     let view1 = View3::new(&pair.vertices, panel1);
@@ -246,7 +256,7 @@ fn main() {
         };
         let file_name = format!("aoim-3d-{degrees:.0}.svg");
         let path = Path::new(&out_dir).join(&file_name);
-        if let Err(error) = fs::write(&path, render(&pair, degrees)) {
+        if let Err(error) = fs::write(&path, render(&pair, degrees, "rectangular")) {
             eprintln!("cannot write {}: {error}", path.display());
             std::process::exit(1);
         }
@@ -254,6 +264,45 @@ fn main() {
             links,
             "<li><a href=\"{file_name}\">{degrees:.0} deg 3D</a> \
              <img src=\"{file_name}\" alt=\"AOIM 3D {degrees:.0} deg\"></li>"
+        );
+    }
+    let l_profile = [
+        Point2 { x: -2.0, y: -1.0 },
+        Point2 { x: 0.0, y: -1.0 },
+        Point2 { x: 0.0, y: 0.0 },
+        Point2 { x: 1.0, y: 0.0 },
+        Point2 { x: 1.0, y: 1.0 },
+        Point2 { x: -2.0, y: 1.0 },
+    ];
+    let t_profile = [
+        Point2 { x: -1.0, y: -1.0 },
+        Point2 { x: 1.0, y: -1.0 },
+        Point2 { x: 1.0, y: 0.0 },
+        Point2 { x: 2.0, y: 0.0 },
+        Point2 { x: 2.0, y: 1.0 },
+        Point2 { x: -2.0, y: 1.0 },
+        Point2 { x: -2.0, y: 0.0 },
+        Point2 { x: -1.0, y: 0.0 },
+    ];
+    let model = LineArc::new(4.0, 150.0_f64.to_radians()).unwrap();
+    for (name, profile) in [("L", &l_profile[..]), ("T", &t_profile[..])] {
+        let sweep = match build_profile_pair(model, profile, 20.0, 8, 32) {
+            Ok(sweep) => sweep,
+            Err(error) => {
+                eprintln!("{name}: {error:?}");
+                std::process::exit(1);
+            }
+        };
+        let file_name = format!("aoim-3d-{name}.svg");
+        let path = Path::new(&out_dir).join(&file_name);
+        if let Err(error) = fs::write(&path, render(&sweep.pair, 150.0, name)) {
+            eprintln!("cannot write {}: {error}", path.display());
+            std::process::exit(1);
+        }
+        let _ = writeln!(
+            links,
+            "<li><a href=\"{file_name}\">150 deg {name}-profile 3D</a> \
+             <img src=\"{file_name}\" alt=\"AOIM 3D {name} profile\"></li>"
         );
     }
     let index = format!(
