@@ -100,7 +100,8 @@ fn main() {
     probe_direct_shared_topology();
     probe_closed_box();
     probe_direct_cylinder_face();
-    probe_direct_aoim_prism();
+    probe_direct_aoim_prism(false);
+    probe_direct_aoim_prism(true);
 }
 
 fn probe_planar_arc_cap() {
@@ -508,6 +509,16 @@ fn probe_closed_box() {
     }
     let (faces, edges, vertices) = counts(&b);
     println!("BOX faces={faces} edges={edges} vertices={vertices}");
+    for s in p1::shells(&mut k, &b, None).unwrap() {
+        for fu in b.shell(s).unwrap().get_faceuses().unwrap() {
+            let rec = b.faceuse(fu).unwrap();
+            println!(
+                "AOIM_FU shell={s:?} face={:?} orient={:?}",
+                rec.face.map(|f| f.index()),
+                rec.orientation
+            );
+        }
+    }
     let mut min_uses = usize::MAX;
     let mut max_uses = 0;
     let mut edge_list = Vec::new();
@@ -672,7 +683,7 @@ fn probe_direct_cylinder_face() {
     }
 }
 
-fn probe_direct_aoim_prism() {
+fn probe_direct_aoim_prism(side_first: bool) {
     use aoim_line_arc_research::sweep::{build_regions, seam_point, Strategy};
     use aoim_line_arc_research::{LineArc, Point2};
     use solidcore::surface::plane::Plane;
@@ -931,16 +942,83 @@ fn probe_direct_aoim_prism() {
         }
     };
 
-    make_face("bottom", bottom_surface, &bottom_e, &bottom_v, n);
-    make_face("top", top_surface, &top_e, &top_v, n);
-    for i in 0..n {
-        let j = (i + 1) % n;
-        let edges = [bottom_e[i], vertical_e[j], top_e[i], vertical_e[i]];
-        let starts = [bottom_v[i], bottom_v[j], top_v[j], top_v[i]];
-        make_face(&format!("side{i}"), surfaces[i].clone(), &edges, &starts, 4);
+    let order = if side_first {
+        "sides-first"
+    } else {
+        "caps-first"
+    };
+    let bottom_loop_edges: Vec<EdgeId> = (0..n).rev().map(|i| bottom_e[i]).collect();
+    let bottom_loop_starts: Vec<solidcore::VertexId> =
+        (0..n).rev().map(|i| bottom_v[(i + 1) % n]).collect();
+    if side_first {
+        for i in 0..n {
+            let j = (i + 1) % n;
+            let edges = [bottom_e[i], vertical_e[j], top_e[i], vertical_e[i]];
+            let starts = [bottom_v[i], bottom_v[j], top_v[j], top_v[i]];
+            make_face(&format!("side{i}"), surfaces[i].clone(), &edges, &starts, 4);
+        }
+        make_face(
+            "bottom",
+            bottom_surface,
+            &bottom_loop_edges,
+            &bottom_loop_starts,
+            n,
+        );
+        make_face("top", top_surface, &top_e, &top_v, n);
+    } else {
+        make_face(
+            "bottom",
+            bottom_surface,
+            &bottom_loop_edges,
+            &bottom_loop_starts,
+            n,
+        );
+        make_face("top", top_surface, &top_e, &top_v, n);
+        for i in 0..n {
+            let j = (i + 1) % n;
+            let edges = [bottom_e[i], vertical_e[j], top_e[i], vertical_e[i]];
+            let starts = [bottom_v[i], bottom_v[j], top_v[j], top_v[i]];
+            make_face(&format!("side{i}"), surfaces[i].clone(), &edges, &starts, 4);
+        }
     }
 
     let (faces, edges, vertices) = counts(&b);
+    let inf = b.infinite_region();
+    for r in p1::regions(&b, None).unwrap() {
+        let rec = b.region(r).unwrap();
+        println!(
+            "AOIM_REGION {r:?} void={} shells={}",
+            rec.is_void,
+            rec.shells.len()
+        );
+    }
+    for s in p1::shells(&mut k, &b, None).unwrap() {
+        let rec = b.shell(s).unwrap();
+        let faceuses = rec.get_faceuses().unwrap_or_default();
+        let same = faceuses
+            .iter()
+            .filter(|&&fu| {
+                b.faceuse(fu).unwrap().orientation
+                    == solidcore::nurbs::b_spline_surface_n_lib::p2::OrientType::Same
+            })
+            .count();
+        let opposite = faceuses.len() - same;
+        println!(
+            "AOIM_SHELL {s:?} region={:?} type={:?} faces={} faceuses={} same={same} opposite={opposite}",
+            rec.region,
+            rec.shell_type,
+            rec.faces.len(),
+            faceuses.len()
+        );
+        for &fu in &faceuses {
+            let use_ = b.faceuse(fu).unwrap();
+            println!(
+                "AOIM_FU shell={s:?} face={:?} orient={:?}",
+                use_.face.map(|f| f.index()),
+                use_.orientation
+            );
+        }
+    }
     let mut min_uses = usize::MAX;
     let mut max_uses = 0;
     for e in p1::edges(&b, None).unwrap() {
@@ -952,5 +1030,100 @@ fn probe_direct_aoim_prism() {
     }
     let shells = p1::shells(&mut k, &b, None).map(|v| v.len()).unwrap_or(0);
     let regions = p1::regions(&b, None).map(|v| v.len()).unwrap_or(0);
-    println!("DIRECT_AOIM_PRISM faces={faces} edges={edges} vertices={vertices} edgeuses={min_uses}..{max_uses} shells={shells} regions={regions} area={:.6}", built.expected.area());
+    println!("DIRECT_AOIM_PRISM order={order} faces={faces} edges={edges} vertices={vertices} edgeuses={min_uses}..{max_uses} shells={shells} regions={regions} area={:.6}", built.expected.area());
+    println!("AOIM_INFINITE before={:?}", b.infinite_region());
+    if let Some(inf) = inf {
+        match solidcore::topology::brep::p1::reset_infinite_region(
+            &mut k,
+            &mut b,
+            Some(inf),
+            solidcore::topology::brep::p1::SetRegionVoidType::InfiniteRegionOnly,
+        ) {
+            Ok(()) => println!("AOIM_RESET_INFINITE ok old_infinite={inf:?}"),
+            Err(e) => println!("AOIM_RESET_INFINITE err={e:?}"),
+        }
+    }
+    println!("AOIM_INFINITE after={:?}", b.infinite_region());
+    for r in p1::regions(&b, None).unwrap() {
+        let rec = b.region(r).unwrap();
+        println!(
+            "AOIM_REGION_AFTER {r:?} void={} shells={}",
+            rec.is_void,
+            rec.shells.len()
+        );
+    }
+    use solidcore::topology::edgeuse::p1 as eu1;
+    let mut min_same = usize::MAX;
+    let mut min_opp = usize::MAX;
+    let mut max_same = 0;
+    let mut max_opp = 0;
+    for e in p1::edges(&b, None).unwrap() {
+        let mut same = 0;
+        let mut opp = 0;
+        for eu in solidcore::topology::edge::edgeuses(&b, e, None, None).unwrap() {
+            match eu1::orientation(&b, eu).unwrap() {
+                solidcore::nurbs::b_spline_surface_n_lib::p2::OrientType::Same => same += 1,
+                solidcore::nurbs::b_spline_surface_n_lib::p2::OrientType::Opposite => opp += 1,
+                solidcore::nurbs::b_spline_surface_n_lib::p2::OrientType::Unknown => {}
+            }
+        }
+        min_same = min_same.min(same);
+        max_same = max_same.max(same);
+        min_opp = min_opp.min(opp);
+        max_opp = max_opp.max(opp);
+    }
+    println!("AOIM_EDGE_ORIENT same={min_same}..{max_same} opposite={min_opp}..{max_opp}");
+    use solidcore::geom::attribute::AttributeStore;
+    use solidcore::mass::integrator::properties::{brep_volume, PropertyAttributes};
+    let store = AttributeStore::default();
+    let key = |_e: solidcore::EntityRef| ObjectKey(0);
+    let attributes = PropertyAttributes {
+        store: &store,
+        key_of: &key,
+    };
+    match brep_volume(&k, &b, 1e-6, &attributes) {
+        Ok(volume) => println!(
+            "AOIM_VOLUME {volume:.9} expected={:.9}",
+            built.expected.area() * (z1 - z0)
+        ),
+        Err(e) => println!("AOIM_VOLUME err={e:?}"),
+    }
+    use std::collections::BTreeMap;
+    let mut face_shells: BTreeMap<u32, Vec<u32>> = BTreeMap::new();
+    for s in p1::shells(&mut k, &b, None).unwrap() {
+        for fu in b.shell(s).unwrap().get_faceuses().unwrap() {
+            let face = b.faceuse(fu).unwrap().face.unwrap();
+            face_shells
+                .entry(face.index())
+                .or_default()
+                .push(u32::try_from(s.index()).unwrap());
+        }
+    }
+    let each_face_two_shells = face_shells
+        .values()
+        .all(|shells| shells.len() == 2 && shells[0] != shells[1]);
+    println!(
+        "AOIM_FACE_SHELLS faces={} each_face_two_distinct_shells={each_face_two_shells}",
+        face_shells.len()
+    );
+    let orient = solidcore::topology::brep::p3::orient_trimmed_surfaces(
+        &mut k, &mut b, &mut env, &mut marks, true, false, None,
+    );
+    match orient {
+        Ok(result) => println!("AOIM_ORIENT ok {result:?}"),
+        Err(e) => println!("AOIM_ORIENT err={e:?}"),
+    }
+    assert_eq!((faces, edges, vertices), (8, 18, 12));
+    assert_eq!((shells, regions), (2, 2));
+    assert!(each_face_two_shells);
+    assert_eq!((min_same, max_same, min_opp, max_opp), (2, 2, 2, 2));
+    let old_inf = inf.expect("the pre-split infinite region");
+    let solid = p1::regions(&b, None)
+        .unwrap()
+        .into_iter()
+        .find(|r| *r != old_inf)
+        .expect("solid region");
+    assert_eq!(b.region(old_inf).unwrap().is_void, 1);
+    assert_eq!(b.region(solid).unwrap().is_void, 0);
+    println!("AOIM_PROBE_PASS order={order}");
 }

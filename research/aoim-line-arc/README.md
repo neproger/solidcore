@@ -487,19 +487,24 @@ relative to SMLib.
 The mesh work is now a validation/reference path, not the production target.
 The direct B-rep design (final outer shell, no seam face, no Boolean) and its
 concrete face/assembly plan are in [`BREP_PLAN.md`](BREP_PLAN.md). Reproducible
-public-API probes are in [`probes/brep_probe`](probes/brep_probe).
+public-API probes are in [`probes/brep_probe`](probes/brep_probe); the Russian
+technical report is [`BREP_REPORT_RU.md`](BREP_REPORT_RU.md).
 
-The direct path works up to closure: `make_shell_vertex` + `make_wire_edge`
-build the shared vertices and edges, and `make_face_topology` builds each face
-from the existing edge uses, creating the next edge-use pair on shared edges.
-The probe builds a box (6 faces, 12 edges, 8 vertices, 4 edge uses per edge, one
-shell/region), a cylindrical face from line and arc edges, and all 8 faces of
-the 90-degree AOIM prism (18 edges, 12 vertices, 4 edge uses per edge), without
-stitching. The last prism face then stops at the omitted
-`TestClosureSplitRegion` tail (`topology.brep_p6`, after
-`CalculateBoundingBox`) and leaves 2 shells/2 regions.
+The direct path produced the first closed AOIM B-rep: `make_shell_vertex` +
+`make_wire_edge` build the shared vertices and edges, and `make_face_topology`
+builds each face from the existing edge uses, creating the next edge-use pair on
+shared edges. The 90-degree prism has 8 faces, 18 edges, 12 vertices, 4 edge
+uses per edge, one void and one solid region, and one faceuse per face in each
+shell. The bottom cap loop must be reversed so the cap orientation matches the
+other faces.
+
+`TestClosureSplitRegion` still returns `Unported` from its omitted p6 tail, but
+the split itself is complete. `reset_infinite_region` on the known pre-split
+infinite region sets the void/solid flags; both caps-first and sides-first
+orders pass. Volume and outward-normal checks remain blocked by
+`SmSurface::DropCurve` and `CalculateBoundingBox`.
 
 The old stitch path still stops at `SmBrep::StitchFaces`
 (`topology.brep_p4`); calling `DoStitching` directly stops at
-`SmBrep::m_pVertexListHead` (`topology.brep_p1`). Both paths therefore stop at
-unfinished kernel storage/closure work, not at AOIM geometry.
+`SmBrep::m_pVertexListHead` (`topology.brep_p1`). It is no longer needed for the
+direct AOIM shell.
