@@ -88,6 +88,8 @@ pub enum Solid3Error {
     SeamMismatch,
     /// Volume or seam area does not match the 2D reference.
     MetricMismatch,
+    /// Non-adjacent triangles cross in space.
+    SelfIntersection,
 }
 
 impl From<RegionError> for Solid3Error {
@@ -167,6 +169,21 @@ impl SweepPair3 {
             .chain(self.arc.faces.iter())
             .filter(|face| face.kind == FaceKind::Seam)
             .collect()
+    }
+
+    /// Face pairs whose non-adjacent triangles cross in space.
+    pub fn self_intersections(&self) -> Vec<(usize, usize)> {
+        let combined = self.combined_body();
+        body_self_intersections(&self.vertices, &combined)
+    }
+
+    /// Reject proper crossings in the combined shell.
+    pub fn validate_no_self_intersections(&self) -> Result<(), Solid3Error> {
+        if self.self_intersections().is_empty() {
+            Ok(())
+        } else {
+            Err(Solid3Error::SelfIntersection)
+        }
     }
 
     /// Re-run closure, seam-sharing and volume checks.
@@ -1036,11 +1053,11 @@ fn ear_clip(polygon: &[Point2]) -> Result<Vec<[usize; 3]>, Solid3Error> {
             let current = indices[position];
             let next = indices[(position + 1) % count];
             let cross = orient2(polygon[previous], polygon[current], polygon[next]);
-            if cross < -1e-12 {
+            if cross <= 1e-12 {
                 continue;
             }
             let mut blocked = false;
-            for &other in &indices {
+            for other in 0..polygon.len() {
                 if other == previous || other == current || other == next {
                     continue;
                 }
@@ -1419,5 +1436,482 @@ mod profile_tests {
             build_profile_pair(model, &collapsed, 20.0, 8, 32),
             Err(Solid3Error::InvalidProfile)
         ));
+    }
+}
+
+/// Face pairs whose triangulated boundaries intersect in 3D.
+///
+/// Pairs that share a vertex are skipped, because they are expected to meet at
+/// a common vertex in a manifold mesh. This detects proper crossings between
+/// non-adjacent faces; it is not a replacement for the edge-manifold check.
+pub fn body_self_intersections(vertices: &[Point3], body: &Body3) -> Vec<(usize, usize)> {
+    let mut triangles: Vec<(usize, [usize; 3])> = Vec::new();
+    for (face_index, face) in body.faces.iter().enumerate() {
+        for ids in triangulate_face(vertices, &face.vertices) {
+            let a = vertices[ids[0]];
+            let b = vertices[ids[1]];
+            let c = vertices[ids[2]];
+            if triangle_area_squared(a, b, c) > 1e-20 {
+                triangles.push((face_index, ids));
+            }
+        }
+    }
+    let mut intersections = BTreeSet::new();
+    for first in 0..triangles.len() {
+        for second in (first + 1)..triangles.len() {
+            let (face_a, ids_a) = triangles[first];
+            let (face_b, ids_b) = triangles[second];
+            if ids_a.iter().any(|id| ids_b.contains(id)) {
+                continue;
+            }
+            let a = vertices[ids_a[0]];
+            let b = vertices[ids_a[1]];
+            let c = vertices[ids_a[2]];
+            let d = vertices[ids_b[0]];
+            let e = vertices[ids_b[1]];
+            let f = vertices[ids_b[2]];
+            if triangles_intersect(a, b, c, d, e, f) {
+                intersections.insert(if face_a < face_b {
+                    (face_a, face_b)
+                } else {
+                    (face_b, face_a)
+                });
+            }
+        }
+    }
+    intersections.into_iter().collect()
+}
+
+fn triangle_area_squared(a: Point3, b: Point3, c: Point3) -> f64 {
+    let n = cross(sub(b, a), sub(c, a));
+    dot(n, n)
+}
+
+fn triangles_intersect(a: Point3, b: Point3, c: Point3, d: Point3, e: Point3, f: Point3) -> bool {
+    let epsilon = 1e-9;
+    let n1 = cross(sub(b, a), sub(c, a));
+    let n2 = cross(sub(e, d), sub(f, d));
+    if dot(n1, n1) <= 1e-20 || dot(n2, n2) <= 1e-20 {
+        return false;
+    }
+    let d1 = dot(n1, sub(d, a));
+    let d2 = dot(n1, sub(e, a));
+    let d3 = dot(n1, sub(f, a));
+    if (d1 > epsilon && d2 > epsilon && d3 > epsilon)
+        || (d1 < -epsilon && d2 < -epsilon && d3 < -epsilon)
+    {
+        return false;
+    }
+    let e1 = dot(n2, sub(a, d));
+    let e2 = dot(n2, sub(b, d));
+    let e3 = dot(n2, sub(c, d));
+    if (e1 > epsilon && e2 > epsilon && e3 > epsilon)
+        || (e1 < -epsilon && e2 < -epsilon && e3 < -epsilon)
+    {
+        return false;
+    }
+    let coplanar = d1.abs() <= epsilon
+        && d2.abs() <= epsilon
+        && d3.abs() <= epsilon
+        && e1.abs() <= epsilon
+        && e2.abs() <= epsilon
+        && e3.abs() <= epsilon;
+    if coplanar {
+        return coplanar_triangles_overlap(a, b, c, d, e, f, n1);
+    }
+    let direction = cross(n1, n2);
+    let length = dot(direction, direction).sqrt();
+    if length <= epsilon {
+        return false;
+    }
+    let axis = Point3 {
+        x: direction.x / length,
+        y: direction.y / length,
+        z: direction.z / length,
+    };
+    let Some(points_a) = plane_cross_points(a, b, c, e1, e2, e3, epsilon) else {
+        return false;
+    };
+    let Some(points_b) = plane_cross_points(d, e, f, d1, d2, d3, epsilon) else {
+        return false;
+    };
+    let (min_a, max_a) = projected_interval(&points_a, axis);
+    let (min_b, max_b) = projected_interval(&points_b, axis);
+    let low = min_a.max(min_b);
+    let high = max_a.min(max_b);
+    if high - low <= epsilon {
+        return false;
+    }
+    let base = points_a[0];
+    let parameter = 0.5 * (low + high);
+    let offset = parameter - dot(base, axis);
+    let midpoint = Point3 {
+        x: base.x + axis.x * offset,
+        y: base.y + axis.y * offset,
+        z: base.z + axis.z * offset,
+    };
+    point_in_triangle_3d_strict(midpoint, a, b, c, n1)
+        && point_in_triangle_3d_strict(midpoint, d, e, f, n2)
+}
+
+fn plane_cross_points(
+    a: Point3,
+    b: Point3,
+    c: Point3,
+    da: f64,
+    db: f64,
+    dc: f64,
+    epsilon: f64,
+) -> Option<Vec<Point3>> {
+    let points = [a, b, c];
+    let distances = [da, db, dc];
+    let mut result = Vec::new();
+    for index in 0..3 {
+        let next = (index + 1) % 3;
+        if distances[index].abs() <= epsilon {
+            push_point_unique(&mut result, points[index], epsilon);
+        }
+        let first = distances[index];
+        let second = distances[next];
+        if (first > epsilon && second < -epsilon) || (first < -epsilon && second > epsilon) {
+            let t = first / (first - second);
+            let point = Point3 {
+                x: points[index].x + (points[next].x - points[index].x) * t,
+                y: points[index].y + (points[next].y - points[index].y) * t,
+                z: points[index].z + (points[next].z - points[index].z) * t,
+            };
+            push_point_unique(&mut result, point, epsilon);
+        }
+    }
+    if result.is_empty() {
+        None
+    } else {
+        Some(result)
+    }
+}
+
+fn push_point_unique(points: &mut Vec<Point3>, point: Point3, epsilon: f64) {
+    if points
+        .iter()
+        .any(|existing| existing.distance_to(point) <= epsilon)
+    {
+        return;
+    }
+    points.push(point);
+}
+
+fn projected_interval(points: &[Point3], axis: Point3) -> (f64, f64) {
+    let mut min = f64::INFINITY;
+    let mut max = f64::NEG_INFINITY;
+    for point in points {
+        let value = dot(*point, axis);
+        min = min.min(value);
+        max = max.max(value);
+    }
+    (min, max)
+}
+
+fn coplanar_triangles_overlap(
+    a: Point3,
+    b: Point3,
+    c: Point3,
+    d: Point3,
+    e: Point3,
+    f: Point3,
+    normal: Point3,
+) -> bool {
+    let (drop_x, drop_y) = if normal.x.abs() >= normal.y.abs() && normal.x.abs() >= normal.z.abs() {
+        (1, 2)
+    } else if normal.y.abs() >= normal.z.abs() {
+        (0, 2)
+    } else {
+        (0, 1)
+    };
+    let project = |p: Point3| -> Point2 {
+        let values = [p.x, p.y, p.z];
+        Point2 {
+            x: values[drop_x],
+            y: values[drop_y],
+        }
+    };
+    let p = [project(a), project(b), project(c)];
+    let q = [project(d), project(e), project(f)];
+    for index in 0..3 {
+        let next = (index + 1) % 3;
+        if point_in_triangle_2d_strict(q[index], p[0], p[1], p[2])
+            || point_in_triangle_2d_strict(p[index], q[0], q[1], q[2])
+        {
+            return true;
+        }
+        for other in 0..3 {
+            let other_next = (other + 1) % 3;
+            if segments_intersect_2d(p[index], p[next], q[other], q[other_next]) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+fn point_in_triangle_2d_strict(p: Point2, a: Point2, b: Point2, c: Point2) -> bool {
+    let d1 = orient2(a, b, p);
+    let d2 = orient2(b, c, p);
+    let d3 = orient2(c, a, p);
+    let epsilon = 1e-12;
+    (d1 > epsilon && d2 > epsilon && d3 > epsilon)
+        || (d1 < -epsilon && d2 < -epsilon && d3 < -epsilon)
+}
+
+fn segments_intersect_2d(a: Point2, b: Point2, c: Point2, d: Point2) -> bool {
+    let o1 = orient2(a, b, c);
+    let o2 = orient2(a, b, d);
+    let o3 = orient2(c, d, a);
+    let o4 = orient2(c, d, b);
+    o1 * o2 < 0.0 && o3 * o4 < 0.0
+}
+
+fn triangulate_face(vertices: &[Point3], ids: &[usize]) -> Vec<[usize; 3]> {
+    let n = ids.len();
+    if n < 3 {
+        return Vec::new();
+    }
+    if n == 3 {
+        return vec![[ids[0], ids[1], ids[2]]];
+    }
+    let a = vertices[ids[0]];
+    let mut normal = Point3 {
+        x: 0.0,
+        y: 0.0,
+        z: 0.0,
+    };
+    for index in 1..n - 1 {
+        let candidate = cross(
+            sub(vertices[ids[index]], a),
+            sub(vertices[ids[index + 1]], a),
+        );
+        if dot(candidate, candidate) > 1e-20 {
+            normal = candidate;
+            break;
+        }
+    }
+    if dot(normal, normal) <= 1e-20 {
+        return Vec::new();
+    }
+    let (drop_x, drop_y) = if normal.x.abs() >= normal.y.abs() && normal.x.abs() >= normal.z.abs() {
+        (1, 2)
+    } else if normal.y.abs() >= normal.z.abs() {
+        (0, 2)
+    } else {
+        (0, 1)
+    };
+    let project = |index: usize| -> Point2 {
+        let p = vertices[index];
+        let values = [p.x, p.y, p.z];
+        Point2 {
+            x: values[drop_x],
+            y: values[drop_y],
+        }
+    };
+    let mut order: Vec<usize> = ids.to_vec();
+    let mut projected: Vec<Point2> = order.iter().map(|&id| project(id)).collect();
+    if signed_area(&projected) < 0.0 {
+        order.reverse();
+        projected.reverse();
+    }
+    match ear_clip(&projected) {
+        Ok(triangles) => triangles
+            .into_iter()
+            .map(|triangle| [order[triangle[0]], order[triangle[1]], order[triangle[2]]])
+            .collect(),
+        Err(_) => (1..n - 1)
+            .map(|index| [order[0], order[index], order[index + 1]])
+            .collect(),
+    }
+}
+
+#[cfg(test)]
+mod intersection_tests {
+    use super::*;
+
+    fn p(x: f64, y: f64, z: f64) -> Point3 {
+        Point3 { x, y, z }
+    }
+
+    #[test]
+    fn separated_triangles_do_not_intersect() {
+        let a = p(0.0, 0.0, 0.0);
+        let b = p(1.0, 0.0, 0.0);
+        let c = p(0.0, 1.0, 0.0);
+        let d = p(10.0, 10.0, 0.0);
+        let e = p(11.0, 10.0, 0.0);
+        let f = p(10.0, 11.0, 0.0);
+        assert!(!triangles_intersect(a, b, c, d, e, f));
+    }
+
+    #[test]
+    fn crossing_triangles_intersect() {
+        let a = p(0.0, 0.0, 0.0);
+        let b = p(1.0, 0.0, 0.0);
+        let c = p(0.0, 1.0, 0.0);
+        let d = p(0.2, 0.2, -1.0);
+        let e = p(0.3, 0.2, 1.0);
+        let f = p(0.2, 0.3, 1.0);
+        let n1 = cross(sub(b, a), sub(c, a));
+        let n2 = cross(sub(e, d), sub(f, d));
+        let d1 = dot(n1, sub(d, a));
+        let d2 = dot(n1, sub(e, a));
+        let d3 = dot(n1, sub(f, a));
+        let e1 = dot(n2, sub(a, d));
+        let e2 = dot(n2, sub(b, d));
+        let e3 = dot(n2, sub(c, d));
+        let pa = plane_cross_points(a, b, c, e1, e2, e3, 1e-9);
+        let pb = plane_cross_points(d, e, f, d1, d2, d3, 1e-9);
+        println!("cross n1={n1:?} n2={n2:?} pa={pa:?} pb={pb:?}");
+        assert!(triangles_intersect(a, b, c, d, e, f));
+    }
+
+    #[test]
+    fn coplanar_disjoint_triangles_do_not_intersect() {
+        let a = p(0.0, 0.0, 0.0);
+        let b = p(1.0, 0.0, 0.0);
+        let c = p(0.0, 1.0, 0.0);
+        let d = p(2.0, 0.0, 0.0);
+        let e = p(3.0, 0.0, 0.0);
+        let f = p(2.0, 1.0, 0.0);
+        assert!(!triangles_intersect(a, b, c, d, e, f));
+    }
+
+    #[test]
+    fn coplanar_overlapping_triangles_intersect() {
+        let a = p(0.0, 0.0, 0.0);
+        let b = p(1.0, 0.0, 0.0);
+        let c = p(0.0, 1.0, 0.0);
+        let d = p(0.1, 0.1, 0.0);
+        let e = p(0.8, 0.1, 0.0);
+        let f = p(0.1, 0.8, 0.0);
+        assert!(triangles_intersect(a, b, c, d, e, f));
+    }
+}
+
+#[cfg(test)]
+mod cap_test {
+    use super::*;
+    fn p(x: f64, y: f64, z: f64) -> Point3 {
+        Point3 { x, y, z }
+    }
+
+    #[test]
+    fn known_cap_lateral_pair_does_not_intersect() {
+        let a = p(-20.0, 0.6666666666666666, -0.3333333333333333);
+        let b = p(-20.0, 2.0, 1.0);
+        let c = p(-20.0, 2.0, 0.75);
+        let d = p(-20.0, 0.5, 1.0);
+        let e = p(1.8660254037844388, 0.5, 1.0);
+        let f = p(3.7320508075688776, 1.0, 1.0);
+        let g = p(-20.0, 1.0, 1.0);
+        assert!(!triangles_intersect(a, b, c, d, e, f));
+        assert!(!triangles_intersect(a, b, c, d, f, g));
+    }
+}
+
+#[test]
+fn t_profile_ear_clipping_area_is_correct() {
+    let mut profile = vec![
+        Point2 { x: -1.0, y: -1.0 },
+        Point2 { x: 1.0, y: -1.0 },
+        Point2 { x: 1.0, y: 0.0 },
+        Point2 { x: 2.0, y: 0.0 },
+        Point2 { x: 2.0, y: 1.0 },
+        Point2 { x: -2.0, y: 1.0 },
+        Point2 { x: -2.0, y: 0.0 },
+        Point2 { x: -1.0, y: 0.0 },
+    ];
+    if signed_area(&profile) < 0.0 {
+        profile.reverse();
+    }
+    let triangles = ear_clip(&profile).unwrap();
+    let mut area = 0.0;
+    for triangle in triangles {
+        let a = profile[triangle[0]];
+        let b = profile[triangle[1]];
+        let c = profile[triangle[2]];
+        area += 0.5 * orient2(a, b, c).abs();
+    }
+    assert!((area - 6.0).abs() < 1e-9, "area={area}");
+}
+
+fn point_in_triangle_3d_strict(p: Point3, a: Point3, b: Point3, c: Point3, normal: Point3) -> bool {
+    let (drop_x, drop_y) = if normal.x.abs() >= normal.y.abs() && normal.x.abs() >= normal.z.abs() {
+        (1, 2)
+    } else if normal.y.abs() >= normal.z.abs() {
+        (0, 2)
+    } else {
+        (0, 1)
+    };
+    let project = |point: Point3| -> Point2 {
+        let values = [point.x, point.y, point.z];
+        Point2 {
+            x: values[drop_x],
+            y: values[drop_y],
+        }
+    };
+    point_in_triangle_2d_strict(project(p), project(a), project(b), project(c))
+}
+
+#[test]
+fn general_l_and_t_have_no_spatial_self_intersections() {
+    let model = LineArc::new(4.0, 150.0_f64.to_radians()).unwrap();
+    let l_shape = [
+        Point2 { x: -2.0, y: -1.0 },
+        Point2 { x: 0.0, y: -1.0 },
+        Point2 { x: 0.0, y: 0.0 },
+        Point2 { x: 1.0, y: 0.0 },
+        Point2 { x: 1.0, y: 1.0 },
+        Point2 { x: -2.0, y: 1.0 },
+    ];
+    let t_shape = [
+        Point2 { x: -1.0, y: -1.0 },
+        Point2 { x: 1.0, y: -1.0 },
+        Point2 { x: 1.0, y: 0.0 },
+        Point2 { x: 2.0, y: 0.0 },
+        Point2 { x: 2.0, y: 1.0 },
+        Point2 { x: -2.0, y: 1.0 },
+        Point2 { x: -2.0, y: 0.0 },
+        Point2 { x: -1.0, y: 0.0 },
+    ];
+    for profile in [&l_shape[..], &t_shape[..]] {
+        let sweep = build_profile_pair(model, profile, 20.0, 8, 32).unwrap();
+        assert!(sweep.pair.self_intersections().is_empty());
+    }
+}
+
+#[test]
+fn rectangular_pairs_have_no_spatial_self_intersections() {
+    for (degrees, line_length) in [
+        (30.0_f64, 20.0_f64),
+        (90.0, 20.0),
+        (150.0, 20.0),
+        (179.0, 500.0),
+    ] {
+        let model = LineArc::new(4.0, degrees.to_radians()).unwrap();
+        let pair = build_pair(
+            model,
+            Strategy::HybridAtJunction,
+            Sweep3Params {
+                d0: -2.0,
+                d1: 2.0,
+                z0: -1.0,
+                z1: 1.0,
+                line_length,
+                seam_samples: 401,
+                arc_steps: 32,
+            },
+        )
+        .unwrap();
+        assert!(
+            pair.self_intersections().is_empty(),
+            "{degrees}: {:?}",
+            pair.self_intersections()
+        );
     }
 }

@@ -321,6 +321,32 @@ The new views are `out/aoim-3d-L.svg` and `out/aoim-3d-T.svg` (also in
 `out/3d.html`). They show the L/T cross-section carried through the line and
 arc bodies with the shared seam surface isolated in the second panel.
 
+### Spatial self-intersection audit
+
+`SweepPair3::self_intersections` triangulates every face (ear clipping, not a
+naive fan, so concave caps are handled), skips triangle pairs that share a
+vertex, and tests non-adjacent triangles with a plane-intersection interval plus
+an interior-midpoint check. Coplanar triangles use a strict 2D overlap test.
+Known separated/crossing/coplanar cases are unit-tested.
+
+Results:
+
+| model | triangle face pairs |
+|---|---:|
+| rectangular prism, 30/90/150/179° | 0 |
+| general L profile | 0 |
+| general T profile | 0 |
+| general rectangle | 1 |
+
+The single general-rectangle pair is a coplanar `Lateral/Lateral` pair on the
+`z = -1` bottom surface. It is a real remaining mesh-parameterization issue, not
+merely an edge-incidence failure. The general rectangle is therefore **not yet
+certified free of spatial self-intersections**, even though its combined volume
+matches the reference. L/T and the rectangular prism pass this audit.
+
+This is the main remaining risk before exact B-rep work: a closed, correctly
+oriented shell can still contain a local overlap.
+
 **Current 3D limitations:** faceted planar quads for the sampled seam and arc;
 simple polygons only (no holes); fixed global `Z`; no twisted/moving frame; no
 true trimmed NURBS B-rep faces; no SMLib comparison yet; the
@@ -345,7 +371,7 @@ cd research/aoim-line-arc
 cargo test
 ```
 
-The suite currently has **60 tests**. They cover:
+The suite currently has **68 tests**. They cover:
 
 - the original AOIM algebra, independent bisection, focus/directrix, existence limit, tangency, scaling, and invalid inputs;
 - hybrid seam construction, tangent parameter sign, C1 continuity at `P`, and boundary sharing;
@@ -358,7 +384,7 @@ The suite currently has **60 tests**. They cover:
 - event-driven first-valid cuts, the `150/179°` comparison against the miter-bounded cut, and the proof-by-parameter that the AOIM contact event lies before the finite arc;
 - 3D prism closure, shared seam face matching, top/bottom height placement, volume scaling with profile height, and the `30/90/150/170/175/179°` closed-pair checks;
 - general L/T profile closure, shared seam disk, combined-volume quadrature, reversed-profile acceptance, and invalid-profile rejection;
-- general L/T profile closure, shared seam disk, combined-volume quadrature, reversed-profile acceptance, and invalid-profile rejection;
+- spatial triangle–triangle audit: known crossing/separated/coplanar cases, zero pairs for L/T and rectangular `30/90/150/179°`, and the documented one-pair general-rectangle residual;
 - adaptive three-part area balance, raster overlap/gap/symdiff, self-intersection, and the comparison that the adaptive miter is shorter than the hybrid wedge.
 
 The original checks that substituted `P(d)` back into the parabola were **self-confirming**: both sides came from the same two offset equations. They are kept, but the independent bisection, geometric bisector, and 2D region checks are the ones that can detect a branch, sign, or prolongation error.
@@ -429,9 +455,15 @@ produce closed line/arc bodies sharing one seam disk; the combined volume matche
 the independent profile quadrature (`<0.05%` for the tested profiles); reversed
 profiles are accepted and bow-tie/`d <= -R` profiles are rejected.
 
-**Not yet validated:** profiles with holes or self-intersections, twisted/moving
-frames, true trimmed NURBS B-rep faces, B-rep sewing with SolidCore, adaptive
-3D extrusion, or performance relative to SMLib.
+**Spatial audit:** the triangle–triangle checker finds zero face pairs for L/T
+and the rectangular `30/90/150/179°` bodies. It finds one coplanar
+`Lateral/Lateral` pair in the general rectangle bottom surface, so that case is
+not yet certified; the checker and residual are documented above.
+
+**Not yet validated:** profiles with holes or self-intersections, the general
+rectangle bottom-surface residual, twisted/moving frames, true trimmed NURBS
+B-rep faces, B-rep sewing with SolidCore, adaptive 3D extrusion, or performance
+relative to SMLib.
 
 **Next:**
 
@@ -449,6 +481,8 @@ frames, true trimmed NURBS B-rep faces, B-rep sewing with SolidCore, adaptive
    SMLib on identical inputs.
 
 **No upstream PR is intended until that evidence exists.**
+
+
 
 
 
