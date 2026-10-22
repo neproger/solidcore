@@ -169,6 +169,23 @@ inner-shell choice, redistribution of faces/wires/shells joined only by vertices
 and empty-shell/region cleanup. The prism is left with 2 shells and 2 regions;
 the face/edge topology is otherwise complete.
 
+## Ownership
+
+From the checked-in plan only (no `gh` client is available in this workspace):
+
+- `topology.brep_p4`: `todo`, `claimed_by = ""`; owns `StitchFaces`, but the
+  direct path does not use it.
+- `topology.brep_p1`: `partial`, claimed by bluecmd (PR #145).
+- `topology.brep_p5`: `partial` (PR #194), no current claim recorded.
+- `topology.brep_p6`: `partial`, no current claim recorded; its
+  `TestClosureSplitRegion` tail is the direct path's blocker.
+- `topology.brep_p7`: `partial` (PR #155), no current claim recorded.
+- `heal.stitch_p1`: `partial`, claimed by bluecmd (PR #196).
+- `heal.stitch_p2`: `partial`, claimed by bluecmd (PR #205).
+- `intersect.curve_class_p4`: `partial` (PR #137), no current claim recorded.
+
+The direct path needs none of the stitch owners. It needs the p6 closure tail,
+which is currently unclaimed in the plan.
 ## Probe results
 
 The probes are preserved in `probes/brep_probe/` and reproduce with:
