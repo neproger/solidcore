@@ -1,4 +1,4 @@
-﻿//! 2D sweep-region construction and verification for the AOIM experiments.
+//! 2D sweep-region construction and verification for the AOIM experiments.
 //!
 //! The module is deliberately independent of the SolidCore kernel. It builds
 //! the line-strip and arc-annulus regions from the *actual prolonged profile
@@ -1131,4 +1131,74 @@ mod extra_tests {
             );
         }
     }
+}
+/// Compare any number of trimmed parts against one expected outer contour.
+///
+/// A raster cell counts as overlap when it is inside more than one part. This
+/// is the generic form used by the three-part adaptive-path builder.
+pub fn raster_compare(
+    parts: &[&Polygon],
+    expected: &Polygon,
+    resolution: usize,
+) -> Result<RasterMetrics, RegionError> {
+    let resolution = resolution.max(16);
+    let mut all = parts.to_vec();
+    all.push(expected);
+    let (min_x, max_x, min_y, max_y) = polygon_bounds(&all);
+    if !min_x.is_finite() || !max_x.is_finite() || max_x <= min_x || max_y <= min_y {
+        return Err(RegionError::EmptyPolygon);
+    }
+
+    let cells: Vec<Vec<bool>> = parts
+        .iter()
+        .map(|polygon| rasterize(polygon, min_x, max_x, min_y, max_y, resolution))
+        .collect();
+    let expected_cells = rasterize(expected, min_x, max_x, min_y, max_y, resolution);
+
+    let mut expected_count = 0usize;
+    let mut union_count = 0usize;
+    let mut overlap_count = 0usize;
+    let mut gap_count = 0usize;
+    let mut extra_count = 0usize;
+    for index in 0..expected_cells.len() {
+        let inside = cells.iter().filter(|cells| cells[index]).count();
+        let in_union = inside > 0;
+        let in_expected = expected_cells[index];
+        if in_expected {
+            expected_count += 1;
+        }
+        if in_union {
+            union_count += 1;
+        }
+        if inside > 1 {
+            overlap_count += 1;
+        }
+        if in_expected && !in_union {
+            gap_count += 1;
+        }
+        if in_union && !in_expected {
+            extra_count += 1;
+        }
+    }
+
+    let cell_area = (max_x - min_x) * (max_y - min_y) / (resolution * resolution) as f64;
+    let expected_area = expected_count as f64 * cell_area;
+    let symmetric_difference_area = (gap_count + extra_count) as f64 * cell_area;
+    let symmetric_difference_fraction = if expected_area > 0.0 {
+        symmetric_difference_area / expected_area
+    } else {
+        0.0
+    };
+
+    Ok(RasterMetrics {
+        resolution,
+        cell_area,
+        expected_area,
+        union_area: union_count as f64 * cell_area,
+        overlap_area: overlap_count as f64 * cell_area,
+        gap_area: gap_count as f64 * cell_area,
+        extra_area: extra_count as f64 * cell_area,
+        symmetric_difference_area,
+        symmetric_difference_fraction,
+    })
 }

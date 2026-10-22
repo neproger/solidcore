@@ -9,6 +9,7 @@
 //! The example writes `out/aoim-line-arc-{30,90,150}.svg` and `out/index.html`.
 //! It uses only the research crate and `std`; it never touches SolidCore.
 
+use aoim_line_arc_research::adaptive::{AdaptiveParams, AdaptivePath, AdaptiveRegions};
 use aoim_line_arc_research::sweep::{
     build_regions, build_untrimmed, BuiltRegions, RegionError, Strategy,
 };
@@ -727,6 +728,40 @@ fn main() {
         );
     }
 
+    let mut adaptive_links = String::new();
+    for (degrees, line_length, max_miter, max_deviation) in [
+        (150.0_f64, 20.0_f64, 6.5_f64, 1.5_f64),
+        (179.0, 20.0, 6.5, 3.5),
+    ] {
+        let model = match LineArc::new(RADIUS, degrees.to_radians()) {
+            Ok(model) => model,
+            Err(error) => {
+                eprintln!("cannot build {degrees} deg model: {error:?}");
+                std::process::exit(1);
+            }
+        };
+        let file_name = format!("aoim-adaptive-{degrees:.0}.svg");
+        let path = Path::new(&out_dir).join(&file_name);
+        let request = AdaptiveParams {
+            max_miter_length: max_miter,
+            max_path_deviation: max_deviation,
+            preserve_endpoints: true,
+            preserve_tangency: false,
+        };
+        if let Err(error) = fs::write(
+            &path,
+            render_adaptive_comparison(&model, request, line_length),
+        ) {
+            eprintln!("cannot write {}: {error}", path.display());
+            std::process::exit(1);
+        }
+        let _ = writeln!(
+            adaptive_links,
+            "<li><a href=\"{file_name}\">{degrees:.0} deg: adaptive path</a> \
+             <img src=\"{file_name}\" alt=\"Adaptive AOIM {degrees:.0} deg\"></li>"
+        );
+    }
+
     let index = format!(
         "<!doctype html>\n<html lang=\"en\"><meta charset=\"utf-8\">\
          <title>AOIM Line-Arc visuals</title>\n\
@@ -739,6 +774,11 @@ fn main() {
          hybrid trimmed regions. Purple is the linear seam on the extensions; green is the \
          AOIM seam on the finite side.</p>\n\
          <ul>{comparisons}</ul>\n\
+         <h2>Adaptive path regularization</h2>\n\
+         <p>The incoming line is shortened to A, a straight segment is inserted tangent to \
+         the arc at Q, and the remaining arc is kept. Orange dashed is the hybrid wedge; \
+         green is the line-line miter at A.</p>\n\
+         <ul>{adaptive_links}</ul>\n\
          <h2>Single-strategy figures</h2>\n\
          <p>Top: offset construction. Bottom: finite sweep regions and the seam. \
          Green = finite bodies, orange = supporting extensions, red = no real intersection.</p>\n\
@@ -1178,6 +1218,337 @@ fn render_comparison(model: &LineArc) -> String {
     canvas.finish_sized(
         &format!(
             "AOIM original vs hybrid, {:.0} deg",
+            model.corner_angle_rad.to_degrees()
+        ),
+        height,
+    )
+}
+
+fn adaptive_bounds(regions: &AdaptiveRegions) -> Bounds {
+    let mut bounds = Bounds::new(
+        f64::INFINITY,
+        f64::NEG_INFINITY,
+        f64::INFINITY,
+        f64::NEG_INFINITY,
+    );
+    for polygon in [
+        &regions.line,
+        &regions.straight,
+        &regions.arc,
+        &regions.expected,
+    ] {
+        for point in &polygon.points {
+            bounds.include(*point);
+        }
+    }
+    bounds
+}
+
+fn draw_adaptive_path(
+    canvas: &mut Canvas,
+    view: &View,
+    model: &LineArc,
+    path: &AdaptivePath,
+    regions: &AdaptiveRegions,
+    panel_top: f64,
+) {
+    let cut = path.cut;
+    let start = model.arc_start_angle();
+    let end = model.arc_end_angle();
+    let remaining_start = start + cut.removed_arc_angle;
+
+    // Original path, dashed.
+    canvas.line(
+        view,
+        Point2 {
+            x: -path.line_length,
+            y: 0.0,
+        },
+        Point2 { x: 0.0, y: 0.0 },
+        "#aaaaaa",
+        1.4,
+        "6 5",
+    );
+    canvas.polyline(
+        view,
+        &arc_points(model, RADIUS, start, end, 100),
+        "#aaaaaa",
+        1.4,
+        "6 5",
+    );
+
+    // Hybrid wedge for comparison.
+    let hybrid_seam = (0..=120)
+        .filter_map(|index| {
+            let d = PROFILE_MIN + (PROFILE_MAX - PROFILE_MIN) * index as f64 / 120.0;
+            aoim_line_arc_research::sweep::seam_point(model, Strategy::HybridAtJunction, d).ok()
+        })
+        .collect::<Vec<_>>();
+    canvas.polyline(view, &hybrid_seam, EXTENSION_COLOR, 1.6, "8 5");
+
+    // Modified path: line to A, tangent A-Q, remaining arc Q-end.
+    canvas.line(
+        view,
+        Point2 {
+            x: -path.line_length,
+            y: 0.0,
+        },
+        cut.cut_point,
+        "#111111",
+        2.2,
+        "",
+    );
+    canvas.line(
+        view,
+        cut.cut_point,
+        cut.tangent_point,
+        HYBRID_COLOR,
+        2.8,
+        "",
+    );
+    canvas.polyline(
+        view,
+        &arc_points(model, RADIUS, remaining_start, end, 100),
+        "#111111",
+        2.2,
+        "",
+    );
+
+    // Line-line miter at A.
+    canvas.polyline(
+        view,
+        &regions.seam.iter().map(|s| s.point).collect::<Vec<_>>(),
+        FINITE_COLOR,
+        2.4,
+        "",
+    );
+    canvas.dot(view, cut.cut_point, 4.0, HYBRID_COLOR);
+    canvas.dot(view, cut.tangent_point, 4.0, FINITE_COLOR);
+    canvas.dot(view, Point2 { x: 0.0, y: 0.0 }, 3.2, "#111111");
+    let (ax, ay) = view.map(cut.cut_point);
+    let (qx, qy) = view.map(cut.tangent_point);
+    canvas.text(ax + 6.0, ay - 6.0, 10.0, "start", HYBRID_COLOR, "A");
+    canvas.text(qx + 6.0, qy + 12.0, 10.0, "start", FINITE_COLOR, "Q");
+
+    canvas.rect(
+        (18.0, panel_top + 44.0, 380.0, 82.0),
+        "#ffffff",
+        0.93,
+        "#cccccc",
+        1.0,
+    );
+    canvas.text(
+        28.0,
+        panel_top + 64.0,
+        10.0,
+        "start",
+        "#333333",
+        &format!(
+            "turn at A={:.2} deg, removed arc={:.2} deg, remaining={:.2} deg",
+            cut.theta.to_degrees(),
+            cut.removed_arc_angle.to_degrees(),
+            cut.remaining_arc_angle.to_degrees(),
+        ),
+    );
+    canvas.text(
+        28.0,
+        panel_top + 80.0,
+        10.0,
+        "start",
+        "#333333",
+        &format!(
+            "miter chord={:.3}, extent={:.3}, path deviation={:.3}",
+            cut.miter_length, cut.miter_extent, cut.path_deviation
+        ),
+    );
+    canvas.text(
+        28.0,
+        panel_top + 96.0,
+        10.0,
+        "start",
+        "#333333",
+        "gray dashed = original path; orange dashed = hybrid wedge",
+    );
+    canvas.text(
+        18.0,
+        panel_top + 2.0,
+        15.0,
+        "start",
+        "#111111",
+        &format!(
+            "{:.0} deg: adaptive path (line -> tangent -> remaining arc)",
+            model.corner_angle_rad.to_degrees()
+        ),
+    );
+}
+
+fn draw_adaptive_regions(
+    canvas: &mut Canvas,
+    view: &View,
+    model: &LineArc,
+    path: &AdaptivePath,
+    regions: &AdaptiveRegions,
+    panel_top: f64,
+) {
+    canvas.polygon(
+        view,
+        &regions.line.points,
+        LINE_COLOR,
+        0.24,
+        LINE_COLOR,
+        1.5,
+    );
+    canvas.polygon(
+        view,
+        &regions.straight.points,
+        HYBRID_COLOR,
+        0.24,
+        HYBRID_COLOR,
+        1.5,
+    );
+    canvas.polygon(view, &regions.arc.points, ARC_COLOR, 0.24, ARC_COLOR, 1.5);
+    let seam: Vec<Point2> = regions.seam.iter().map(|sample| sample.point).collect();
+    canvas.polyline(view, &seam, FINITE_COLOR, 2.6, "");
+
+    let normal = Point2 {
+        x: path.cut.theta.sin(),
+        y: -path.cut.theta.cos(),
+    };
+    let q0 = Point2 {
+        x: path.cut.tangent_point.x + path.d0 * normal.x,
+        y: path.cut.tangent_point.y + path.d0 * normal.y,
+    };
+    let q1 = Point2 {
+        x: path.cut.tangent_point.x + path.d1 * normal.x,
+        y: path.cut.tangent_point.y + path.d1 * normal.y,
+    };
+    canvas.line(view, q0, q1, "#888888", 1.2, "4 4");
+
+    let raster = regions.raster;
+    canvas.rect(
+        (18.0, panel_top + 44.0, 390.0, 82.0),
+        "#ffffff",
+        0.93,
+        "#cccccc",
+        1.0,
+    );
+    canvas.text(
+        28.0,
+        panel_top + 64.0,
+        10.0,
+        "start",
+        "#333333",
+        &format!(
+            "areas: line={:.3} straight={:.3} arc={:.3} expected={:.3}",
+            regions.line.area(),
+            regions.straight.area(),
+            regions.arc.area(),
+            regions.expected.area(),
+        ),
+    );
+    canvas.text(
+        28.0,
+        panel_top + 80.0,
+        10.0,
+        "start",
+        "#333333",
+        &format!(
+            "balance={:+.2e} overlap={:.2e} gap={:.2e} sym={:.2e}",
+            regions.area_balance_fraction,
+            raster.overlap_area / raster.expected_area,
+            raster.gap_area / raster.expected_area,
+            raster.symmetric_difference_fraction,
+        ),
+    );
+    canvas.text(
+        28.0,
+        panel_top + 96.0,
+        10.0,
+        "start",
+        if regions.self_intersecting {
+            LIMIT_COLOR
+        } else {
+            "#333333"
+        },
+        &format!("self-intersecting = {}", regions.self_intersecting),
+    );
+    canvas.text(
+        18.0,
+        panel_top + 2.0,
+        15.0,
+        "start",
+        "#111111",
+        &format!(
+            "{:.0} deg: adaptive trimmed regions",
+            model.corner_angle_rad.to_degrees()
+        ),
+    );
+}
+
+fn render_adaptive_comparison(model: &LineArc, params: AdaptiveParams, line_length: f64) -> String {
+    let stride = PANEL_HEIGHT + PANEL_GAP;
+    let tops = [30.0, 30.0 + stride, 30.0 + 2.0 * stride];
+    let path = match AdaptivePath::solve(*model, PROFILE_MIN, PROFILE_MAX, line_length, params) {
+        Ok(path) => path,
+        Err(error) => {
+            let mut canvas = Canvas::new();
+            canvas.text(
+                24.0,
+                50.0,
+                14.0,
+                "start",
+                LIMIT_COLOR,
+                &format!("adaptive path infeasible: {error:?}"),
+            );
+            return canvas.finish("adaptive path infeasible");
+        }
+    };
+    let regions = match path.build_regions(401, 96, 600) {
+        Ok(regions) => regions,
+        Err(error) => {
+            let mut canvas = Canvas::new();
+            canvas.text(
+                24.0,
+                50.0,
+                14.0,
+                "start",
+                LIMIT_COLOR,
+                &format!("adaptive regions failed: {error:?}"),
+            );
+            return canvas.finish("adaptive regions failed");
+        }
+    };
+
+    let mut canvas = Canvas::new();
+
+    let original_view = View::new(construction_bounds(model), tops[0]);
+    draw_hybrid_construction(&mut canvas, &original_view, model, tops[0]);
+
+    let mut path_bounds = sweep_bounds(model);
+    path_bounds.include(path.cut.cut_point);
+    path_bounds.include(path.cut.tangent_point);
+    for sample in &regions.seam {
+        path_bounds.include(sample.point);
+    }
+    let path_view = View::new(path_bounds, tops[1]);
+    draw_adaptive_path(&mut canvas, &path_view, model, &path, &regions, tops[1]);
+
+    let regions_view = View::new(adaptive_bounds(&regions), tops[2]);
+    draw_adaptive_regions(&mut canvas, &regions_view, model, &path, &regions, tops[2]);
+
+    for top in &tops[1..] {
+        canvas.screen_line(
+            (20.0, top - 20.0),
+            (WIDTH - 20.0, top - 20.0),
+            "#dddddd",
+            1.0,
+            "",
+        );
+    }
+    let height = tops[2] + PANEL_HEIGHT + 30.0;
+    canvas.finish_sized(
+        &format!(
+            "AOIM adaptive path, {:.0} deg",
             model.corner_angle_rad.to_degrees()
         ),
         height,

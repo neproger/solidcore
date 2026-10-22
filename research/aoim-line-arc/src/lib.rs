@@ -355,6 +355,7 @@ impl LineArc {
     }
 }
 
+pub mod adaptive;
 pub mod continuing;
 pub mod sweep;
 
