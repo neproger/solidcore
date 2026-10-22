@@ -49,124 +49,201 @@ Expected topology for the six-segment rectangle: 8 faces, 18 edges, 12
 vertices, one closed shell, `V - E + F = 2`. Volume is exactly
 `union_area * (z1 - z0)`.
 
+## Direct shared-topology construction (validated)
+
+The supported public path is:
+
+1. `topology::brep::p9::make_shell_vertex` creates a vertex.
+2. `topology::brep::p3::make_wire_edge` creates an edge between two existing
+   vertices with a 3D curve and interval.
+3. `topology::brep::p6::make_face_topology` creates a face from ordered
+   `EdgeuseId` loops. For a wire edge it consumes the existing edge-use pair;
+   for an edge already used by a face it creates the next edge-use pair on the
+   same edge. This is the direct-sharing primitive.
+4. `topology::edge::edgeuses`, `topology::edgeuse::p1::vertexuse` and
+   `topology::vertexuse::vertex` select the edge use that starts at the next
+   loop vertex.
+
+This path was validated with public APIs only:
+
+- Two adjacent squares: 2 faces, 7 edges, 6 vertices (shared edge).
+- A closed box: 6 faces, 12 edges, 8 vertices; every edge has 4 edge uses; one
+  shell and one region.
+- A cylindrical face from two vertical lines and two circle arcs: 1 face,
+  4 edges, 4 vertices.
+
+No `StitchFaces`, `GlueVertices`, Boolean, `project_and_trim` or seam surface
+is used.
+
 ## Face construction
 
 ### Caps
 
-Use `topology::brep::p8::create_planar_face_with_3d_curves` for each cap
-(`z0`, `z1`) with the analytic contour curves in order. The function accepts a
-mixed line/arc loop.
+Build the contour as wire edges at `z0` and `z1`, then call
+`make_face_topology` with the ordered edge uses. Use a plane surface:
 
-Probe result: a planar face with one circle arc and three lines succeeds. A
-two-edge line+arc loop returned `SM_ERR`; use loops with at least three edges
-(the outer contour has six or more).
+- bottom: outward normal `(0, 0, -1)`;
+- top: outward normal `(0, 0, 1)`.
+
+The cap loop is the ordered outer contour. There is one loop and one face per
+cap.
 
 ### Line side faces
 
-Each vertical extrusion of a contour line segment is a planar rectangle. Build
-it with `create_planar_face_with_3d_curves` using four `Curve::Line` edges, or
-with a plane surface and `create_face_from_surface`. The four-line form avoids
-having to choose a plane UV frame.
+Each vertical extrusion of a contour line is a planar rectangle. Build its four
+wire edges, use a plane through the segment with the outward side normal, and
+call `make_face_topology` with the loop
+
+```
+bottom start -> bottom end -> top end -> top start -> bottom start
+```
 
 ### Arc side faces
 
-Each vertical extrusion of a contour arc is a cylindrical rectangular patch in
-`(angle, z)` parameter space. Build the cylinder with
-`surface::cone::p1::Cone::new_cylinder_bounded`:
+Each vertical extrusion of a contour arc is a cylindrical rectangular patch.
+Build the bottom arc, top arc and two vertical line edges as wire edges. Create
+the cylinder with `surface::cone::p1::Cone::new_cylinder_bounded`:
 
 - origin at the arc center with `z = z0`;
-- local `x_axis` pointing to the arc start and `y_axis` along the arc tangent;
-- constructor angles in **degrees**; use `start = 0`, `end = span_degrees`;
+- local `x_axis` at the arc start, `y_axis` along the arc tangent;
+- constructor angles in **degrees**, start `0`, end `span_degrees`;
 - height `z1 - z0`;
-- then call `make_nurb(&k)`; without it the surface has an empty natural UV
-  domain and `create_face_from_surface` fails with `SM_ERR`.
+- then call `make_nurb(&k)` (otherwise the natural UV domain is empty).
 
-Use `create_face_from_surface` with the surface and `Extent2d`:
+Call `make_face_topology` with the cylinder surface and the loop
 
 ```
-U (radians): 0 .. span_radians
-V:           0 .. (z1 - z0)
+bottom arc -> vertical at end -> top arc reversed -> vertical at start
 ```
 
-Probe result: this produces a valid cylindrical face. The constructor's
-angles are degrees, while the natural UV domain is radians; do not pass
-radians to `new_cylinder_bounded`.
+The edges lie analytically on the cylinder, so no projection or UV trimming is
+needed for topology construction.
 
-`SurfOfExtrusion` is not in `SurfaceKind` and is not needed: the final shell
-has no seam face.
+### Orientation
+
+Choose each surface normal outward and use the matching `OrientType`. If the
+assembled shell has inconsistent normals, `topology::brep::p3::orient_trimmed_surfaces`
+is ported; run it as a validation/fix-up step. Do not use it to replace the
+direct topology.
 
 ## Assembly
 
 1. Build the 2D union and an analytic `Vec<ContourSegment>` with exact shared
-   endpoints. Reuse the same vertex coordinates across adjacent faces.
-2. Create one `Brep` with `topology::brep::p3::new_brep` (or
-   `Brep::new_with_infinite_region`). Use the infinite region for face
-   creation, as the existing face builders do.
-3. Add the two cap faces and all side faces.
-4. Call `topology::brep::p5::stitch_and_orient` with
-   `StitchAndOrientOptions::default()`.
-5. Verify: one closed shell/region, manifold edges, 8 faces (six-segment
-   case), no interior seam, volume `area * height`, outward normals, and the
-   same result for `30/90/150/179` degrees and for a rectangle with negative
-   profile portions.
+   endpoints.
+2. Create the `2N` cap vertices with `make_shell_vertex`.
+3. Create the `2N` cap edges and `N` vertical edges with `make_wire_edge`.
+4. Create the bottom cap, top cap and `N` side faces with
+   `make_face_topology`.
+5. For every loop edge, select the edge use starting at the required vertex,
+   so the loop direction is explicit.
+6. Verify:
+   - faces `2 + N`, edges `3N`, vertices `2N`;
+   - every edge has 4 edge uses;
+   - one shell and one region;
+   - no internal seam face;
+   - volume `area * (z1 - z0)`;
+   - outward normals;
+   - the same result for `30/90/150/179` degrees and for negative-profile
+     portions.
+7. Only if normals are inconsistent, run `orient_trimmed_surfaces` and
+   re-check.
 
-No `project_and_trim`, no Boolean, and no `SurfOfExtrusion` is required.
+No `stitch_and_orient`, no `glue_*`, no Boolean and no `SurfOfExtrusion` is
+required.
 
-## Current blocker
+## Why this supersedes the stitch path
 
-`topology::brep::p5::stitch_and_orient` calls `p5::stitch_faces`, which is a
-stub:
+`topology::brep::p5::stitch_and_orient` still stops at
+`SmBrep::StitchFaces` (`topology.brep_p4`). Calling the already-ported
+`heal::stitch::p2::Stitch::do_stitching` directly gets past that wrapper but
+stops at `SmBrep::m_pVertexListHead` (`topology.brep_p1`), reached through
+`topology.brep_p5`'s `GlueVertices` storage erasure. The stitch path is
+therefore blocked by kernel storage/list integration, not by AOIM geometry.
+
+The direct path avoids both gaps. `make_face_topology` is public and has already
+built the shared faces of the AOIM prism. Its remaining blocker is different:
+when the last face closes the shell, `TestClosureSplitRegion`
+(`topology.brep_p6`) reaches its omitted tail after `CalculateBoundingBox`
+(`SmBrep.cpp:27966-28583`). That tail performs infinite-region testing, the
+inner-shell choice, redistribution of faces/wires/shells joined only by vertices
+and empty-shell/region cleanup. The prism is left with 2 shells and 2 regions;
+the face/edge topology is otherwise complete.
+
+## Probe results
+
+The probes are preserved in `probes/brep_probe/` and reproduce with:
+
+```sh
+cd research/aoim-line-arc/probes/brep_probe
+cargo run --offline
+```
+
+Current output:
 
 ```
-UNPORTED(topology.brep_p4): SmBrep::StitchFaces
+PLANAR_ARC_CAP ok face=0
+TWO_FACES faces=2 edges=8 vertices=8
+CYLINDER_PATCH ok face=0 u_max=1.570796 v_max=2.000000
+PYRAMID blocker=unported: upstream `SmBrep::StitchFaces` (unit topology.brep_p4) is not ported yet
+DO_STITCHING blocker=unported: upstream `SmBrep::m_pVertexListHead` (unit topology.brep_p1) is not ported yet
+DIRECT_FACE_A face=0
+DIRECT_FACE_B face=1
+DIRECT_SHARED faces=2 edges=7 vertices=6
+BOX_FACE bottom face=0
+BOX_FACE top face=1
+BOX_FACE front face=2
+BOX_FACE right face=3
+BOX_FACE back face=4
+BOX_FACE left face=5
+BOX faces=6 edges=12 vertices=8
+BOX_EDGE_USES min=4 max=4 all=[4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4]
+BOX_SHELLS shells=1 regions=1
+DIRECT_CYLINDER_FACE face=0 faces=1 edges=4 vertices=4
+AOIM_FACE bottom face=0
+AOIM_FACE top face=1
+AOIM_FACE side0 face=2
+AOIM_FACE side1 face=3
+AOIM_FACE side2 face=4
+AOIM_FACE side3 face=5
+AOIM_FACE side4 face=6
+AOIM_FACE side5 err=Unported { upstream: "SmBrep::TestClosureSplitRegion (after CalculateBoundingBox, SmBrep.cpp:27966-28583)", unit: "topology.brep_p6" }
+DIRECT_AOIM_PRISM faces=8 edges=18 vertices=12 edgeuses=4..4 shells=2 regions=2 area=51.933998
 ```
 
-`SmBrep::StitchFaces` is listed under `topology.brep_p4` in
-`harness/callgraph/units.json`, but `plan/units/topology.brep_p4.toml` has
-`status = "todo"` and its notes list only `DeleteEdge`, `ShrinkGeometry`, the
-destructor, and `DeleteVertex`. The plan metadata omits `StitchFaces`; it must
-be added to that unit's scope when the unit is claimed.
+Interpretation:
 
-Probe results:
-
-- `primitive::api_primitives::create_pyramid` builds all five planar faces and
-  then fails only with
-  `Unported { upstream: "SmBrep::StitchFaces", unit: "topology.brep_p4" }`.
-  Face construction and `MakeFaceTopology` are therefore not the blocker.
-- Two adjacent planar faces created independently produce 8 edges and 8
-  vertices, not shared topology. Stitching (or equivalent edge/vertex glue) is
-  required.
-- `topology.brep_p7::glue_edges_general` is partial; real coincident pairs can
-  defer at `intersect.curve_class_p4` or `topology.brep_p4::DeleteEdge`.
-  It is not a drop-in replacement for `StitchFaces`.
-- `topology.brep_p4::DeleteEdge` is also unported, so a faithful
-  `StitchFaces` port may need more than that one function.
-
-`SmBrep::OrientTrimmedSurfaces` (`topology.brep_p3`) is ported, but some paths
-still defer at `topology.face_p3` / `topology.face_p4`. The assembled solid
-must be run through difftest before claiming orientation is green.
+- `create_pyramid` builds all planar faces and then stops at
+  `SmBrep::StitchFaces`; face construction is not the issue for the old path.
+- Independent faces do not share topology (8 edges, 8 vertices for two
+  squares).
+- `DoStitching` is blocked earlier, at the p5/p1 vertex-list storage gap.
+- The direct wire-edge + `make_face_topology` path shares edges and builds a
+  box with correct manifold edge-use counts.
+- A cylindrical face with arc boundaries can be built the same way.
+- The AOIM prism builds all 8 faces and shares every edge (4 edge uses per
+  edge), but the final closure stops at the unported `TestClosureSplitRegion`
+  tail and leaves 2 shells/2 regions.
 
 ## Implementation order
 
-1. Core prerequisite: claim `topology.brep_p4` and port `SmBrep::StitchFaces`
-   (plus the `DeleteEdge`/glue dependencies it actually reaches); wire
-   `topology.brep_p5::stitch_faces` to it. This is a kernel PR, not a research
-   change.
-2. In `research/aoim-line-arc`, add an analytic `outer_contour_segments`
-   function (line/arc, exact endpoints) beside the existing sampled
-   `expected_polygon`; keep the mesh code unchanged.
-3. Add a B-rep prototype behind a separate example/binary using the public
-   `solidcore` API. Start with the six-segment 90-degree rectangle, then
-   `30/150/179`, then negative-profile and L/T-style contours.
-4. Cross-check volume and area against the existing 2D hybrid and 3D mesh;
-   reject if the B-rep volume or topology disagrees.
-5. Only after the prototype is stable, consider moving the builder into the
-   kernel/Sweep API. Do not port `CreateSweepAlongPlanarPath` or the mesh
-   pipeline first.
+1. Keep the plan and probes in this research branch; do not claim
+   `topology.brep_p4`, `topology.brep_p6` or implement replacement topology
+   storage.
+2. The 90-degree six-segment prism probe is already in place and reaches the
+   real blocker: all faces/edges are built, but the last face's closure split is
+   unported.
+3. Stop B-rep integration here until `TestClosureSplitRegion` has its omitted
+   tail. Re-run the probe then; if it completes, extend the same builder to
+   `30/150/179`, negative-profile and L/T-style contours.
+4. Cross-check volume and area against the existing 2D hybrid and 3D mesh only
+   after the closure split succeeds.
+5. Do not fall back to `StitchFaces`; its path is blocked earlier by the same
+   kernel storage work.
 
-## Decision needed
+## Decision
 
-The next substantive step is a core port of `SmBrep::StitchFaces`. If that unit
-is already owned elsewhere, the alternative is to keep the B-rep prototype
-blocked and use the existing mesh only for research. A research-only manual
-edge-sharing assembler would bypass the real pipeline and is not recommended.
+Use direct shared-topology construction as the architecture. It avoids
+`StitchFaces` and matches the AOIM goal: `AOIM geometry -> shared B-rep topology
+-> closed shell`. The remaining block is the kernel's closed-region split
+(`topology.brep_p6`), not AOIM geometry and not face/edge sharing. Stop here
+until that core operation is available.

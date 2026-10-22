@@ -1,4 +1,4 @@
-﻿# AOIM Line–Arc — independent geometric research
+# AOIM Line–Arc — independent geometric research
 
 Experimental Rust implementation of the **Analytical Offset-Intersection Miter (AOIM)** concept associated with [solidcore issue #447](https://github.com/tangency-labs/solidcore/issues/447).
 
@@ -486,18 +486,20 @@ relative to SMLib.
 
 The mesh work is now a validation/reference path, not the production target.
 The direct B-rep design (final outer shell, no seam face, no Boolean) and its
-concrete face/assembly plan are in [`BREP_PLAN.md`](BREP_PLAN.md).
+concrete face/assembly plan are in [`BREP_PLAN.md`](BREP_PLAN.md). Reproducible
+public-API probes are in [`probes/brep_probe`](probes/brep_probe).
 
-Current blocker: `SmBrep::StitchFaces` (`topology.brep_p4`) is unported, so
-`topology::brep::p5::stitch_and_orient` returns `Unported` after the faces are
-built. Face creation itself works: a pyramid reaches stitching, and probe cases
-for a planar line/arc cap and a trimmed cylindrical patch both succeed.
+The direct path works up to closure: `make_shell_vertex` + `make_wire_edge`
+build the shared vertices and edges, and `make_face_topology` builds each face
+from the existing edge uses, creating the next edge-use pair on shared edges.
+The probe builds a box (6 faces, 12 edges, 8 vertices, 4 edge uses per edge, one
+shell/region), a cylindrical face from line and arc edges, and all 8 faces of
+the 90-degree AOIM prism (18 edges, 12 vertices, 4 edge uses per edge), without
+stitching. The last prism face then stops at the omitted
+`TestClosureSplitRegion` tail (`topology.brep_p6`, after
+`CalculateBoundingBox`) and leaves 2 shells/2 regions.
 
-
-
-
-
-
-
-
-
+The old stitch path still stops at `SmBrep::StitchFaces`
+(`topology.brep_p4`); calling `DoStitching` directly stops at
+`SmBrep::m_pVertexListHead` (`topology.brep_p1`). Both paths therefore stop at
+unfinished kernel storage/closure work, not at AOIM geometry.

@@ -1,0 +1,12 @@
+﻿[package]
+name = "aoim-brep-probe"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[workspace]
+
+[dependencies]
+aoim-line-arc-research = { path = "../.." }
+solidcore = { path = "../../../../crates/solidcore" }
+
