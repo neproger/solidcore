@@ -482,6 +482,17 @@ relative to SMLib.
 
 **No upstream PR is intended until that evidence exists.**
 
+## Direct B-rep integration
+
+The mesh work is now a validation/reference path, not the production target.
+The direct B-rep design (final outer shell, no seam face, no Boolean) and its
+concrete face/assembly plan are in [`BREP_PLAN.md`](BREP_PLAN.md).
+
+Current blocker: `SmBrep::StitchFaces` (`topology.brep_p4`) is unported, so
+`topology::brep::p5::stitch_and_orient` returns `Unported` after the faces are
+built. Face creation itself works: a pyramid reaches stitching, and probe cases
+for a planar line/arc cap and a trimmed cylindrical patch both succeed.
+
 
 
 
