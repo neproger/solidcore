@@ -278,11 +278,11 @@ original-vs-hybrid comparisons, and adaptive-path figures:
 - `out/aoim-adaptive-150.svg`, `-179.svg`
 
 The adaptive figures show the original path (gray dashed), the hybrid wedge
-(orange dashed), the modified path `line -> A -> tangent -> Q -> arc`, the
-line–line miter at `A`, the `Q` cross-section, and the three trimmed regions
-with metrics. Purple is the straight transition, green is the new miter, blue
-is the line body, orange is the remaining arc. The `out/` directory is
-gitignored.
+(orange dashed), the miter-bounded modified path `line -> A -> tangent -> Q ->
+arc` in purple, the event-driven first-valid cut in teal dashed, the line-line
+miter at `A`, the `Q` cross-section, and the three trimmed regions with metrics.
+The event-driven outlines are dashed teal; blue is the line body and orange is
+the remaining arc. The `out/` directory is gitignored.
 
 `metrics` prints the hybrid area/raster table and connector kinematics.
 `adaptive` prints the cut search and adaptive region metrics for all angles.

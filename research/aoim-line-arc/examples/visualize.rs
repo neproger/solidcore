@@ -36,6 +36,7 @@ const FINITE_COLOR: &str = "#1f8a4c";
 const EXTENSION_COLOR: &str = "#e08a2e";
 const LIMIT_COLOR: &str = "#c0392b";
 const HYBRID_COLOR: &str = "#7b4fb3";
+const EVENT_COLOR: &str = "#0f7c8c";
 
 #[derive(Clone, Copy)]
 struct Bounds {
@@ -776,8 +777,9 @@ fn main() {
          <ul>{comparisons}</ul>\n\
          <h2>Adaptive path regularization</h2>\n\
          <p>The incoming line is shortened to A, a straight segment is inserted tangent to \
-         the arc at Q, and the remaining arc is kept. Orange dashed is the hybrid wedge; \
-         green is the line-line miter at A.</p>\n\
+         the arc at Q, and the remaining arc is kept. Solid purple is the miter-bounded \
+         adaptive cut; teal dashed is the event-driven first-valid cut. Orange dashed is \
+         the hybrid wedge; green is the line-line miter at A.</p>\n\
          <ul>{adaptive_links}</ul>\n\
          <h2>Single-strategy figures</h2>\n\
          <p>Top: offset construction. Bottom: finite sweep regions and the seam. \
@@ -1250,6 +1252,7 @@ fn draw_adaptive_path(
     model: &LineArc,
     path: &AdaptivePath,
     regions: &AdaptiveRegions,
+    event: Option<(&AdaptivePath, &AdaptiveRegions)>,
     panel_top: f64,
 ) {
     let cut = path.cut;
@@ -1322,6 +1325,44 @@ fn draw_adaptive_path(
         2.4,
         "",
     );
+
+    if let Some((event_path, event_regions)) = event {
+        let event_cut = event_path.cut;
+        let event_arc_start = start + event_cut.removed_arc_angle;
+        canvas.line(
+            view,
+            event_cut.cut_point,
+            event_cut.tangent_point,
+            EVENT_COLOR,
+            2.2,
+            "6 5",
+        );
+        canvas.polyline(
+            view,
+            &arc_points(model, RADIUS, event_arc_start, end, 100),
+            EVENT_COLOR,
+            2.0,
+            "6 5",
+        );
+        canvas.polyline(
+            view,
+            &event_regions
+                .seam
+                .iter()
+                .map(|sample| sample.point)
+                .collect::<Vec<_>>(),
+            EVENT_COLOR,
+            2.0,
+            "6 5",
+        );
+        canvas.dot(view, event_cut.cut_point, 3.2, EVENT_COLOR);
+        canvas.dot(view, event_cut.tangent_point, 3.2, EVENT_COLOR);
+        let (ex, ey) = view.map(event_cut.cut_point);
+        let (eqx, eqy) = view.map(event_cut.tangent_point);
+        canvas.text(ex - 30.0, ey - 10.0, 9.5, "start", EVENT_COLOR, "A_e");
+        canvas.text(eqx - 30.0, eqy + 6.0, 9.5, "start", EVENT_COLOR, "Q_e");
+    }
+
     canvas.dot(view, cut.cut_point, 4.0, HYBRID_COLOR);
     canvas.dot(view, cut.tangent_point, 4.0, FINITE_COLOR);
     canvas.dot(view, Point2 { x: 0.0, y: 0.0 }, 3.2, "#111111");
@@ -1331,7 +1372,7 @@ fn draw_adaptive_path(
     canvas.text(qx + 6.0, qy + 12.0, 10.0, "start", FINITE_COLOR, "Q");
 
     canvas.rect(
-        (18.0, panel_top + 44.0, 380.0, 82.0),
+        (18.0, panel_top + 44.0, 410.0, 116.0),
         "#ffffff",
         0.93,
         "#cccccc",
@@ -1342,32 +1383,47 @@ fn draw_adaptive_path(
         panel_top + 64.0,
         10.0,
         "start",
-        "#333333",
+        HYBRID_COLOR,
         &format!(
-            "turn at A={:.2} deg, removed arc={:.2} deg, remaining={:.2} deg",
+            "miter-bounded: turn={:.2} deg, removed={:.2} deg, miter={:.3}, dev={:.3}",
             cut.theta.to_degrees(),
             cut.removed_arc_angle.to_degrees(),
-            cut.remaining_arc_angle.to_degrees(),
+            cut.miter_length,
+            cut.path_deviation,
         ),
     );
+    if let Some((event_path, _)) = event {
+        let event_cut = event_path.cut;
+        canvas.text(
+            28.0,
+            panel_top + 80.0,
+            10.0,
+            "start",
+            EVENT_COLOR,
+            &format!(
+                "event-driven: turn={:.2} deg, removed={:.2} deg, miter={:.3}, dev={:.3}",
+                event_cut.theta.to_degrees(),
+                event_cut.removed_arc_angle.to_degrees(),
+                event_cut.miter_length,
+                event_cut.path_deviation,
+            ),
+        );
+    }
     canvas.text(
         28.0,
-        panel_top + 80.0,
+        panel_top + 98.0,
         10.0,
         "start",
         "#333333",
-        &format!(
-            "miter chord={:.3}, extent={:.3}, path deviation={:.3}",
-            cut.miter_length, cut.miter_extent, cut.path_deviation
-        ),
+        "gray dashed = original; orange dashed = hybrid; teal dashed = event-driven",
     );
     canvas.text(
         28.0,
-        panel_top + 96.0,
+        panel_top + 114.0,
         10.0,
         "start",
         "#333333",
-        "gray dashed = original path; orange dashed = hybrid wedge",
+        "purple solid = miter-bounded adaptive",
     );
     canvas.text(
         18.0,
@@ -1376,7 +1432,7 @@ fn draw_adaptive_path(
         "start",
         "#111111",
         &format!(
-            "{:.0} deg: adaptive path (line -> tangent -> remaining arc)",
+            "{:.0} deg: miter-bounded vs event-driven path",
             model.corner_angle_rad.to_degrees()
         ),
     );
@@ -1388,6 +1444,7 @@ fn draw_adaptive_regions(
     model: &LineArc,
     path: &AdaptivePath,
     regions: &AdaptiveRegions,
+    event: Option<(&AdaptivePath, &AdaptiveRegions)>,
     panel_top: f64,
 ) {
     canvas.polygon(
@@ -1424,9 +1481,38 @@ fn draw_adaptive_regions(
     };
     canvas.line(view, q0, q1, "#888888", 1.2, "4 4");
 
+    if let Some((event_path, event_regions)) = event {
+        for polygon in [
+            &event_regions.line,
+            &event_regions.straight,
+            &event_regions.arc,
+        ] {
+            canvas.polyline(view, &polygon.points, EVENT_COLOR, 1.4, "5 4");
+        }
+        let event_seam: Vec<Point2> = event_regions
+            .seam
+            .iter()
+            .map(|sample| sample.point)
+            .collect();
+        canvas.polyline(view, &event_seam, EVENT_COLOR, 2.0, "5 4");
+        let event_normal = Point2 {
+            x: event_path.cut.theta.sin(),
+            y: -event_path.cut.theta.cos(),
+        };
+        let e0 = Point2 {
+            x: event_path.cut.tangent_point.x + event_path.d0 * event_normal.x,
+            y: event_path.cut.tangent_point.y + event_path.d0 * event_normal.y,
+        };
+        let e1 = Point2 {
+            x: event_path.cut.tangent_point.x + event_path.d1 * event_normal.x,
+            y: event_path.cut.tangent_point.y + event_path.d1 * event_normal.y,
+        };
+        canvas.line(view, e0, e1, EVENT_COLOR, 1.0, "3 3");
+    }
+
     let raster = regions.raster;
     canvas.rect(
-        (18.0, panel_top + 44.0, 390.0, 82.0),
+        (18.0, panel_top + 44.0, 390.0, 104.0),
         "#ffffff",
         0.93,
         "#cccccc",
@@ -1460,9 +1546,25 @@ fn draw_adaptive_regions(
             raster.symmetric_difference_fraction,
         ),
     );
+    if let Some((_, event_regions)) = event {
+        let event_raster = event_regions.raster;
+        canvas.text(
+            28.0,
+            panel_top + 96.0,
+            10.0,
+            "start",
+            EVENT_COLOR,
+            &format!(
+                "event areas: expected={:.3}, balance={:+.2e}, sym={:.2e}",
+                event_regions.expected.area(),
+                event_regions.area_balance_fraction,
+                event_raster.symmetric_difference_fraction,
+            ),
+        );
+    }
     canvas.text(
         28.0,
-        panel_top + 96.0,
+        panel_top + 112.0,
         10.0,
         "start",
         if regions.self_intersecting {
@@ -1470,7 +1572,10 @@ fn draw_adaptive_regions(
         } else {
             "#333333"
         },
-        &format!("self-intersecting = {}", regions.self_intersecting),
+        &format!(
+            "miter-bounded self={} | teal dashed = event-driven",
+            regions.self_intersecting
+        ),
     );
     canvas.text(
         18.0,
@@ -1479,7 +1584,7 @@ fn draw_adaptive_regions(
         "start",
         "#111111",
         &format!(
-            "{:.0} deg: adaptive trimmed regions",
+            "{:.0} deg: trimmed regions (solid bounded / dashed event)",
             model.corner_angle_rad.to_degrees()
         ),
     );
@@ -1519,6 +1624,21 @@ fn render_adaptive_comparison(model: &LineArc, params: AdaptiveParams, line_leng
         }
     };
 
+    let event = AdaptivePath::solve_event_driven(
+        *model,
+        PROFILE_MIN,
+        PROFILE_MAX,
+        line_length,
+        params.max_path_deviation,
+    )
+    .ok()
+    .and_then(|event_path| {
+        event_path
+            .build_regions(401, 96, 600)
+            .ok()
+            .map(|event_regions| (event_path, event_regions))
+    });
+
     let mut canvas = Canvas::new();
 
     let original_view = View::new(construction_bounds(model), tops[0]);
@@ -1530,11 +1650,48 @@ fn render_adaptive_comparison(model: &LineArc, params: AdaptiveParams, line_leng
     for sample in &regions.seam {
         path_bounds.include(sample.point);
     }
+    if let Some((event_path, event_regions)) = &event {
+        path_bounds.include(event_path.cut.cut_point);
+        path_bounds.include(event_path.cut.tangent_point);
+        for sample in &event_regions.seam {
+            path_bounds.include(sample.point);
+        }
+    }
     let path_view = View::new(path_bounds, tops[1]);
-    draw_adaptive_path(&mut canvas, &path_view, model, &path, &regions, tops[1]);
+    let event_ref = event.as_ref().map(|(path, regions)| (path, regions));
+    draw_adaptive_path(
+        &mut canvas,
+        &path_view,
+        model,
+        &path,
+        &regions,
+        event_ref,
+        tops[1],
+    );
 
-    let regions_view = View::new(adaptive_bounds(&regions), tops[2]);
-    draw_adaptive_regions(&mut canvas, &regions_view, model, &path, &regions, tops[2]);
+    let mut region_bounds = adaptive_bounds(&regions);
+    if let Some((_, event_regions)) = &event {
+        for polygon in [
+            &event_regions.line,
+            &event_regions.straight,
+            &event_regions.arc,
+            &event_regions.expected,
+        ] {
+            for point in &polygon.points {
+                region_bounds.include(*point);
+            }
+        }
+    }
+    let regions_view = View::new(region_bounds, tops[2]);
+    draw_adaptive_regions(
+        &mut canvas,
+        &regions_view,
+        model,
+        &path,
+        &regions,
+        event_ref,
+        tops[2],
+    );
 
     for top in &tops[1..] {
         canvas.screen_line(
