@@ -100,8 +100,16 @@ fn main() {
     probe_direct_shared_topology();
     probe_closed_box();
     probe_direct_cylinder_face();
-    probe_direct_aoim_prism(false);
-    probe_direct_aoim_prism(true);
+    probe_direct_aoim_prism("90-baseline", 90.0, 0.0, 2.0, 20.0, false);
+    probe_direct_aoim_prism("90-baseline-sides-first", 90.0, 0.0, 2.0, 20.0, true);
+    probe_direct_aoim_prism("90-symmetric", 90.0, -2.0, 2.0, 20.0, false);
+    probe_direct_aoim_prism("90-symmetric-sides-first", 90.0, -2.0, 2.0, 20.0, true);
+    probe_direct_aoim_prism("30-symmetric", 30.0, -2.0, 2.0, 20.0, false);
+    probe_direct_aoim_prism("30-symmetric-sides-first", 30.0, -2.0, 2.0, 20.0, true);
+    probe_direct_aoim_prism("150-symmetric", 150.0, -2.0, 2.0, 20.0, false);
+    probe_direct_aoim_prism("150-symmetric-sides-first", 150.0, -2.0, 2.0, 20.0, true);
+    probe_direct_aoim_prism("179-symmetric", 179.0, -2.0, 2.0, 500.0, false);
+    probe_direct_aoim_prism("179-symmetric-sides-first", 179.0, -2.0, 2.0, 500.0, true);
 }
 
 fn probe_planar_arc_cap() {
@@ -683,7 +691,14 @@ fn probe_direct_cylinder_face() {
     }
 }
 
-fn probe_direct_aoim_prism(side_first: bool) {
+fn probe_direct_aoim_prism(
+    label: &str,
+    angle_deg: f64,
+    d0: f64,
+    d1: f64,
+    line_length: f64,
+    side_first: bool,
+) {
     use aoim_line_arc_research::sweep::{build_regions, seam_point, Strategy};
     use aoim_line_arc_research::{LineArc, Point2};
     use solidcore::surface::plane::Plane;
@@ -692,27 +707,34 @@ fn probe_direct_aoim_prism(side_first: bool) {
     use solidcore::topology::brep::p9;
 
     #[derive(Clone, Copy)]
-    enum Seg {
-        Line {
-            a: Point2,
-            b: Point2,
-        },
-        Arc {
-            c: Point2,
-            r: f64,
-            a0: f64,
-            a1: f64,
-            reversed: bool,
-        },
+    enum Geom {
+        Line,
+        Arc { c: Point2, r: f64, a0: f64, a1: f64 },
     }
 
-    let model = LineArc::new(4.0, 90.0_f64.to_radians()).expect("model");
-    let d0 = 0.0;
-    let d1 = 2.0;
-    let line_length = 20.0;
+    #[derive(Clone, Copy)]
+    struct Seg {
+        a: usize,
+        b: usize,
+        geom: Geom,
+    }
+
+    fn add_point(points: &mut Vec<Point2>, p: Point2) -> usize {
+        if let Some(i) = points
+            .iter()
+            .position(|q| (q.x - p.x).abs() <= 1e-12 && (q.y - p.y).abs() <= 1e-12)
+        {
+            i
+        } else {
+            points.push(p);
+            points.len() - 1
+        }
+    }
+
+    let model = LineArc::new(4.0, angle_deg.to_radians()).expect("model");
     let z0 = -1.0;
     let z1 = 1.0;
-    let built = build_regions(
+    let built = match build_regions(
         &model,
         Strategy::HybridAtJunction,
         d0,
@@ -720,73 +742,144 @@ fn probe_direct_aoim_prism(side_first: bool) {
         line_length,
         401,
         96,
-    )
-    .expect("2D regions");
+    ) {
+        Ok(built) => built,
+        Err(e) => {
+            println!("AOIM_BUILD_ERR label={label} err={e:?}");
+            return;
+        }
+    };
     let center = model.center();
-    let seam0 = seam_point(&model, Strategy::HybridAtJunction, d0).expect("seam d0");
-    let seam1 = seam_point(&model, Strategy::HybridAtJunction, d1).expect("seam d1");
-    let arc_angle = |d: f64| {
-        let seam = seam_point(&model, Strategy::HybridAtJunction, d).expect("seam");
-        (
-            model.arc_start_angle() + model.arc_parameter(seam),
-            model.arc_end_angle(),
-        )
+    let arc_start = model.arc_start_angle();
+    let arc_end = model.arc_end_angle();
+    let seam = |d: f64| seam_point(&model, Strategy::HybridAtJunction, d).expect("seam");
+    let radius = |d: f64| model.radius + d;
+    let arc_start_for = |d: f64| {
+        if d < 0.0 {
+            arc_start
+        } else {
+            arc_start + model.arc_parameter(seam(d))
+        }
     };
-    let arc_end = |radius: f64| Point2 {
-        x: center.x + radius * model.arc_end_angle().cos(),
-        y: center.y + radius * model.arc_end_angle().sin(),
+    let arc_end_point = |d: f64| Point2 {
+        x: center.x + radius(d) * arc_end.cos(),
+        y: center.y + radius(d) * arc_end.sin(),
     };
-    let (outer_a0, outer_a1) = arc_angle(d1);
-    let (inner_a0, inner_a1) = arc_angle(d0);
-    let outer_end = arc_end(model.radius + d1);
-    let inner_end = arc_end(model.radius + d0);
-    let contour = [
+
+    let mut points = Vec::new();
+    let mut segments = Vec::new();
+    let p0 = add_point(
+        &mut points,
         Point2 {
             x: -line_length,
             y: -d1,
         },
-        seam1,
-        outer_end,
-        inner_end,
-        seam0,
+    );
+    let s1 = add_point(&mut points, seam(d1));
+    segments.push(Seg {
+        a: p0,
+        b: s1,
+        geom: Geom::Line,
+    });
+
+    let outer_end = if d1 < 0.0 {
+        let joint = add_point(&mut points, model.joint_arc_point(d1).expect("joint d1"));
+        segments.push(Seg {
+            a: s1,
+            b: joint,
+            geom: Geom::Line,
+        });
+        let end = add_point(&mut points, arc_end_point(d1));
+        segments.push(Seg {
+            a: joint,
+            b: end,
+            geom: Geom::Arc {
+                c: center,
+                r: radius(d1),
+                a0: arc_start,
+                a1: arc_end,
+            },
+        });
+        end
+    } else {
+        let end = add_point(&mut points, arc_end_point(d1));
+        segments.push(Seg {
+            a: s1,
+            b: end,
+            geom: Geom::Arc {
+                c: center,
+                r: radius(d1),
+                a0: arc_start_for(d1),
+                a1: arc_end,
+            },
+        });
+        end
+    };
+
+    let inner_end = add_point(&mut points, arc_end_point(d0));
+    segments.push(Seg {
+        a: outer_end,
+        b: inner_end,
+        geom: Geom::Line,
+    });
+
+    let s0 = if d0 < 0.0 {
+        let joint = add_point(&mut points, model.joint_arc_point(d0).expect("joint d0"));
+        segments.push(Seg {
+            a: inner_end,
+            b: joint,
+            geom: Geom::Arc {
+                c: center,
+                r: radius(d0),
+                a0: arc_start,
+                a1: arc_end,
+            },
+        });
+        let seam0 = add_point(&mut points, seam(d0));
+        segments.push(Seg {
+            a: joint,
+            b: seam0,
+            geom: Geom::Line,
+        });
+        seam0
+    } else {
+        let seam0 = add_point(&mut points, seam(d0));
+        segments.push(Seg {
+            a: inner_end,
+            b: seam0,
+            geom: Geom::Arc {
+                c: center,
+                r: radius(d0),
+                a0: arc_start_for(d0),
+                a1: arc_end,
+            },
+        });
+        seam0
+    };
+
+    let p_last = add_point(
+        &mut points,
         Point2 {
             x: -line_length,
             y: -d0,
         },
-    ];
-    let segments = [
-        Seg::Line {
-            a: contour[0],
-            b: contour[1],
-        },
-        Seg::Arc {
-            c: center,
-            r: model.radius + d1,
-            a0: outer_a0,
-            a1: outer_a1,
-            reversed: false,
-        },
-        Seg::Line {
-            a: contour[2],
-            b: contour[3],
-        },
-        Seg::Arc {
-            c: center,
-            r: model.radius + d0,
-            a0: inner_a0,
-            a1: inner_a1,
-            reversed: true,
-        },
-        Seg::Line {
-            a: contour[4],
-            b: contour[5],
-        },
-        Seg::Line {
-            a: contour[5],
-            b: contour[0],
-        },
-    ];
-    let n = contour.len();
+    );
+    segments.push(Seg {
+        a: s0,
+        b: p_last,
+        geom: Geom::Line,
+    });
+    segments.push(Seg {
+        a: p_last,
+        b: p0,
+        geom: Geom::Line,
+    });
+    let n = points.len();
+    assert_eq!(n, segments.len(), "contour is not a closed indexed chain");
+    println!(
+        "AOIM_CASE label={label} angle={angle_deg} d0={d0} d1={d1} contour={n} area={:.6}",
+        built.expected.area()
+    );
 
     let mut k = Kernel::default();
     let (mut b, region) = new_brep(&mut k);
@@ -796,7 +889,7 @@ fn probe_direct_aoim_prism(side_first: bool) {
 
     let mut bottom_v = Vec::with_capacity(n);
     let mut top_v = Vec::with_capacity(n);
-    for p in contour {
+    for p in &points {
         let (_s, vb) = p9::make_shell_vertex(&mut b, region, Point3::new(p.x, p.y, z0), &mut env)
             .expect("bottom vertex");
         let (_s, vt) = p9::make_shell_vertex(&mut b, region, Point3::new(p.x, p.y, z1), &mut env)
@@ -821,50 +914,57 @@ fn probe_direct_aoim_prism(side_first: bool) {
             )
             .expect("wire edge")
         };
-    let arc_curve = |k: &Kernel, c: Point2, r: f64, a0: f64, a1: f64, reversed: bool, z: f64| {
-        let angle = |t: f64| Point3::new(c.x + r * t.cos(), c.y + r * t.sin(), z);
-        let (s, e) = if reversed { (a1, a0) } else { (a0, a1) };
-        Curve::from(
-            Ellipse::circle_from_3_points(&k, angle(s), angle(0.5 * (a0 + a1)), angle(e), 3, false)
-                .expect("arc"),
-        )
-    };
+    let arc_curve =
+        |k: &Kernel, p: Point2, q: Point2, c: Point2, r: f64, a0: f64, a1: f64, z: f64| {
+            let at = |t: f64| Point3::new(c.x + r * t.cos(), c.y + r * t.sin(), z);
+            let p3 = Point3::new(p.x, p.y, z);
+            let q3 = Point3::new(q.x, q.y, z);
+            let mid = at(0.5 * (a0 + a1));
+            Curve::from(Ellipse::circle_from_3_points(k, p3, mid, q3, 3, false).expect("arc"))
+        };
 
     let mut bottom_e = Vec::with_capacity(n);
     let mut top_e = Vec::with_capacity(n);
-    for i in 0..n {
-        let j = (i + 1) % n;
-        let (cb, ct) = match segments[i] {
-            Seg::Line { a, b: c } => (
-                line(Point3::new(a.x, a.y, z0), Point3::new(c.x, c.y, z0)),
-                line(Point3::new(a.x, a.y, z1), Point3::new(c.x, c.y, z1)),
+    for (i, seg) in segments.iter().enumerate() {
+        let (cb, ct) = match seg.geom {
+            Geom::Line => (
+                line(
+                    Point3::new(points[seg.a].x, points[seg.a].y, z0),
+                    Point3::new(points[seg.b].x, points[seg.b].y, z0),
+                ),
+                line(
+                    Point3::new(points[seg.a].x, points[seg.a].y, z1),
+                    Point3::new(points[seg.b].x, points[seg.b].y, z1),
+                ),
             ),
-            Seg::Arc {
-                c,
-                r,
-                a0,
-                a1,
-                reversed,
-            } => (
-                arc_curve(&k, c, r, a0, a1, reversed, z0),
-                arc_curve(&k, c, r, a0, a1, reversed, z1),
+            Geom::Arc { c, r, a0, a1 } => (
+                arc_curve(&k, points[seg.a], points[seg.b], c, r, a0, a1, z0),
+                arc_curve(&k, points[seg.a], points[seg.b], c, r, a0, a1, z1),
             ),
         };
+        let _ = i;
         bottom_e.push(make_edge(
             &mut k,
             &mut b,
             &mut env,
-            bottom_v[i],
-            bottom_v[j],
+            bottom_v[seg.a],
+            bottom_v[seg.b],
             cb,
         ));
-        top_e.push(make_edge(&mut k, &mut b, &mut env, top_v[i], top_v[j], ct));
+        top_e.push(make_edge(
+            &mut k,
+            &mut b,
+            &mut env,
+            top_v[seg.a],
+            top_v[seg.b],
+            ct,
+        ));
     }
     let mut vertical_e = Vec::with_capacity(n);
     for i in 0..n {
         let curve = line(
-            Point3::new(contour[i].x, contour[i].y, z0),
-            Point3::new(contour[i].x, contour[i].y, z1),
+            Point3::new(points[i].x, points[i].y, z0),
+            Point3::new(points[i].x, points[i].y, z1),
         );
         vertical_e.push(make_edge(
             &mut k,
@@ -882,14 +982,16 @@ fn probe_direct_aoim_prism(side_first: bool) {
     let bottom_surface = plane(Point2 { x: 0.0, y: 0.0 }, z0, Vec3::new(0.0, 0.0, -1.0));
     let top_surface = plane(Point2 { x: 0.0, y: 0.0 }, z1, Vec3::new(0.0, 0.0, 1.0));
     let mut surfaces = Vec::with_capacity(n);
-    for seg in segments {
-        let surface = match seg {
-            Seg::Line { a, b: c } => {
+    for seg in &segments {
+        let surface = match seg.geom {
+            Geom::Line => {
+                let a = points[seg.a];
+                let c = points[seg.b];
                 let dx = c.x - a.x;
                 let dy = c.y - a.y;
                 plane(a, z0, Vec3::new(dy, -dx, 0.0))
             }
-            Seg::Arc { c, r, a0, a1, .. } => {
+            Geom::Arc { c, r, a0, a1 } => {
                 let mut cone = Cone::new_cylinder_bounded(
                     Point3::new(c.x, c.y, z0),
                     Vec3::new(a0.cos(), a0.sin(), 0.0),
@@ -934,11 +1036,8 @@ fn probe_direct_aoim_prism(side_first: bool) {
             solidcore::nurbs::b_spline_surface_n_lib::p2::OrientType::Same,
             &options,
         ) {
-            Ok(face) => println!("AOIM_FACE {name} face={}", face.face.index()),
-            Err(e) => {
-                println!("AOIM_FACE {name} err={e:?}");
-                return;
-            }
+            Ok(face) => println!("AOIM_FACE {label}:{name} face={}", face.face.index()),
+            Err(e) => println!("AOIM_FACE {label}:{name} err={e:?}"),
         }
     };
 
@@ -949,12 +1048,13 @@ fn probe_direct_aoim_prism(side_first: bool) {
     };
     let bottom_loop_edges: Vec<EdgeId> = (0..n).rev().map(|i| bottom_e[i]).collect();
     let bottom_loop_starts: Vec<solidcore::VertexId> =
-        (0..n).rev().map(|i| bottom_v[(i + 1) % n]).collect();
+        (0..n).rev().map(|i| bottom_v[segments[i].b]).collect();
     if side_first {
         for i in 0..n {
-            let j = (i + 1) % n;
-            let edges = [bottom_e[i], vertical_e[j], top_e[i], vertical_e[i]];
-            let starts = [bottom_v[i], bottom_v[j], top_v[j], top_v[i]];
+            let j = segments[i].b;
+            let a = segments[i].a;
+            let edges = [bottom_e[i], vertical_e[j], top_e[i], vertical_e[a]];
+            let starts = [bottom_v[a], bottom_v[j], top_v[j], top_v[a]];
             make_face(&format!("side{i}"), surfaces[i].clone(), &edges, &starts, 4);
         }
         make_face(
@@ -975,9 +1075,10 @@ fn probe_direct_aoim_prism(side_first: bool) {
         );
         make_face("top", top_surface, &top_e, &top_v, n);
         for i in 0..n {
-            let j = (i + 1) % n;
-            let edges = [bottom_e[i], vertical_e[j], top_e[i], vertical_e[i]];
-            let starts = [bottom_v[i], bottom_v[j], top_v[j], top_v[i]];
+            let j = segments[i].b;
+            let a = segments[i].a;
+            let edges = [bottom_e[i], vertical_e[j], top_e[i], vertical_e[a]];
+            let starts = [bottom_v[a], bottom_v[j], top_v[j], top_v[a]];
             make_face(&format!("side{i}"), surfaces[i].clone(), &edges, &starts, 4);
         }
     }
@@ -987,7 +1088,7 @@ fn probe_direct_aoim_prism(side_first: bool) {
     for r in p1::regions(&b, None).unwrap() {
         let rec = b.region(r).unwrap();
         println!(
-            "AOIM_REGION {r:?} void={} shells={}",
+            "AOIM_REGION {label}:{r:?} void={} shells={}",
             rec.is_void,
             rec.shells.len()
         );
@@ -1004,20 +1105,11 @@ fn probe_direct_aoim_prism(side_first: bool) {
             .count();
         let opposite = faceuses.len() - same;
         println!(
-            "AOIM_SHELL {s:?} region={:?} type={:?} faces={} faceuses={} same={same} opposite={opposite}",
+            "AOIM_SHELL {label}:{s:?} region={:?} faces={} faceuses={} same={same} opposite={opposite}",
             rec.region,
-            rec.shell_type,
             rec.faces.len(),
             faceuses.len()
         );
-        for &fu in &faceuses {
-            let use_ = b.faceuse(fu).unwrap();
-            println!(
-                "AOIM_FU shell={s:?} face={:?} orient={:?}",
-                use_.face.map(|f| f.index()),
-                use_.orientation
-            );
-        }
     }
     let mut min_uses = usize::MAX;
     let mut max_uses = 0;
@@ -1030,8 +1122,11 @@ fn probe_direct_aoim_prism(side_first: bool) {
     }
     let shells = p1::shells(&mut k, &b, None).map(|v| v.len()).unwrap_or(0);
     let regions = p1::regions(&b, None).map(|v| v.len()).unwrap_or(0);
-    println!("DIRECT_AOIM_PRISM order={order} faces={faces} edges={edges} vertices={vertices} edgeuses={min_uses}..{max_uses} shells={shells} regions={regions} area={:.6}", built.expected.area());
-    println!("AOIM_INFINITE before={:?}", b.infinite_region());
+    println!(
+        "DIRECT_AOIM_PRISM label={label} order={order} faces={faces} edges={edges} vertices={vertices} edgeuses={min_uses}..{max_uses} shells={shells} regions={regions} area={:.6}",
+        built.expected.area()
+    );
+    println!("AOIM_INFINITE {label}:before={:?}", inf);
     if let Some(inf) = inf {
         match solidcore::topology::brep::p1::reset_infinite_region(
             &mut k,
@@ -1039,15 +1134,15 @@ fn probe_direct_aoim_prism(side_first: bool) {
             Some(inf),
             solidcore::topology::brep::p1::SetRegionVoidType::InfiniteRegionOnly,
         ) {
-            Ok(()) => println!("AOIM_RESET_INFINITE ok old_infinite={inf:?}"),
-            Err(e) => println!("AOIM_RESET_INFINITE err={e:?}"),
+            Ok(()) => println!("AOIM_RESET_INFINITE {label}:ok old_infinite={inf:?}"),
+            Err(e) => println!("AOIM_RESET_INFINITE {label}:err={e:?}"),
         }
     }
-    println!("AOIM_INFINITE after={:?}", b.infinite_region());
+    println!("AOIM_INFINITE {label}:after={:?}", b.infinite_region());
     for r in p1::regions(&b, None).unwrap() {
         let rec = b.region(r).unwrap();
         println!(
-            "AOIM_REGION_AFTER {r:?} void={} shells={}",
+            "AOIM_REGION_AFTER {label}:{r:?} void={} shells={}",
             rec.is_void,
             rec.shells.len()
         );
@@ -1072,7 +1167,7 @@ fn probe_direct_aoim_prism(side_first: bool) {
         min_opp = min_opp.min(opp);
         max_opp = max_opp.max(opp);
     }
-    println!("AOIM_EDGE_ORIENT same={min_same}..{max_same} opposite={min_opp}..{max_opp}");
+    println!("AOIM_EDGE_ORIENT {label}:same={min_same}..{max_same} opposite={min_opp}..{max_opp}");
     use solidcore::geom::attribute::AttributeStore;
     use solidcore::mass::integrator::properties::{brep_volume, PropertyAttributes};
     let store = AttributeStore::default();
@@ -1083,10 +1178,10 @@ fn probe_direct_aoim_prism(side_first: bool) {
     };
     match brep_volume(&k, &b, 1e-6, &attributes) {
         Ok(volume) => println!(
-            "AOIM_VOLUME {volume:.9} expected={:.9}",
+            "AOIM_VOLUME {label}:{volume:.9} expected={:.9}",
             built.expected.area() * (z1 - z0)
         ),
-        Err(e) => println!("AOIM_VOLUME err={e:?}"),
+        Err(e) => println!("AOIM_VOLUME {label}:err={e:?}"),
     }
     use std::collections::BTreeMap;
     let mut face_shells: BTreeMap<u32, Vec<u32>> = BTreeMap::new();
@@ -1103,17 +1198,19 @@ fn probe_direct_aoim_prism(side_first: bool) {
         .values()
         .all(|shells| shells.len() == 2 && shells[0] != shells[1]);
     println!(
-        "AOIM_FACE_SHELLS faces={} each_face_two_distinct_shells={each_face_two_shells}",
+        "AOIM_FACE_SHELLS {label}:faces={} each_face_two_distinct_shells={each_face_two_shells}",
         face_shells.len()
     );
     let orient = solidcore::topology::brep::p3::orient_trimmed_surfaces(
         &mut k, &mut b, &mut env, &mut marks, true, false, None,
     );
     match orient {
-        Ok(result) => println!("AOIM_ORIENT ok {result:?}"),
-        Err(e) => println!("AOIM_ORIENT err={e:?}"),
+        Ok(result) => println!("AOIM_ORIENT {label}:ok {result:?}"),
+        Err(e) => println!("AOIM_ORIENT {label}:err={e:?}"),
     }
-    assert_eq!((faces, edges, vertices), (8, 18, 12));
+    assert_eq!(faces, 2 + n);
+    assert_eq!(edges, 3 * n);
+    assert_eq!(vertices, 2 * n);
     assert_eq!((shells, regions), (2, 2));
     assert!(each_face_two_shells);
     assert_eq!((min_same, max_same, min_opp, max_opp), (2, 2, 2, 2));
@@ -1125,5 +1222,5 @@ fn probe_direct_aoim_prism(side_first: bool) {
         .expect("solid region");
     assert_eq!(b.region(old_inf).unwrap().is_void, 1);
     assert_eq!(b.region(solid).unwrap().is_void, 0);
-    println!("AOIM_PROBE_PASS order={order}");
+    println!("AOIM_PROBE_PASS label={label} order={order}");
 }

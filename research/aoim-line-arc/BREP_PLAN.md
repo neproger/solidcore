@@ -45,9 +45,11 @@ tangent segment; the contour builder must therefore be a general
 Each arc segment maps to a vertical cylindrical patch; each line segment maps
 to a vertical planar patch.
 
-Expected topology for the six-segment rectangle: 8 faces, 18 edges, 12
-vertices, one void shell and one solid shell, `V - E + F = 2` for each
-closed shell. Volume is exactly `union_area * (z1 - z0)`.
+Expected topology for a closed contour of `N` line/arc segments: `2 + N`
+faces, `3N` edges, `2N` vertices, one void shell and one solid shell,
+`V - E + F = 2` for each closed shell. The six-segment baseline is
+8/18/12; the symmetric `[-2, 2]` contour has seven segments and is 9/21/14.
+Volume is exactly `union_area * (z1 - z0)`.
 
 ## Direct shared-topology construction (validated)
 
@@ -191,56 +193,47 @@ From the checked-in plan only (no `gh` client is available in this workspace):
 - `topology.brep_p1`: `partial`, claimed by bluecmd (PR #145).
 - `topology.brep_p5`: `partial` (PR #194), no current claim recorded.
 - `topology.brep_p6`: `partial`, no current claim recorded; its
-  `TestClosureSplitRegion` tail is incomplete, but the simple prism is finished
-  with `reset_infinite_region`.
+  `TestClosureSplitRegion` tail is incomplete, but the simple prism is already
+  correctly split; `reset_infinite_region` only confirms it.
 - `topology.brep_p7`: `partial` (PR #155), no current claim recorded.
 - `heal.stitch_p1`: `partial`, claimed by bluecmd (PR #196).
 - `heal.stitch_p2`: `partial`, claimed by bluecmd (PR #205).
 - `intersect.curve_class_p4`: `partial` (PR #137), no current claim recorded.
 
 The direct path needs none of the stitch owners. It still needs the full p6
-closure tail for general cases; the simple prism only needs the infinite-region
-flag step, which is public.
+closure tail for general cases; the simple prism already has the correct
+infinite-region flags, and `reset_infinite_region` only confirms them.
 
 ## Probe results
 
-The probes are preserved in `probes/brep_probe/` and reproduce with (Russian\ntechnical report: [`BREP_REPORT_RU.md`](BREP_REPORT_RU.md)):
+The probes are preserved in `probes/brep_probe/` and reproduce with (Russian technical report: [`BREP_REPORT_RU.md`](BREP_REPORT_RU.md)):
 
 ```sh
 cd research/aoim-line-arc/probes/brep_probe
 cargo run --offline
 ```
 
-Current output (abridged; the probe also prints per-face orientation):
+Current output is summarized by case (the probe also prints per-face orientation):
 
-```
-PLANAR_ARC_CAP ok face=0
-TWO_FACES faces=2 edges=8 vertices=8
-CYLINDER_PATCH ok face=0 u_max=1.570796 v_max=2.000000
-PYRAMID blocker=unported: upstream `SmBrep::StitchFaces` (unit topology.brep_p4) is not ported yet
-DO_STITCHING blocker=unported: upstream `SmBrep::m_pVertexListHead` (unit topology.brep_p1) is not ported yet
-DIRECT_SHARED faces=2 edges=7 vertices=6
-BOX faces=6 edges=12 vertices=8
-BOX_EDGE_USES min=4 max=4
-BOX_SHELLS shells=1 regions=1
-DIRECT_CYLINDER_FACE face=0 faces=1 edges=4 vertices=4
-AOIM_FACE side5 err=Unported { upstream: "SmBrep::TestClosureSplitRegion (after CalculateBoundingBox, SmBrep.cpp:27966-28583)", unit: "topology.brep_p6" }
-AOIM_REGION RegionId(0) void=1 shells=1
-AOIM_REGION RegionId(1) void=0 shells=1
-AOIM_SHELL ShellId(0) region=RegionId(0) faceuses=8 same=8 opposite=0
-AOIM_SHELL ShellId(12) region=RegionId(1) faceuses=8 same=0 opposite=8
-DIRECT_AOIM_PRISM order=caps-first faces=8 edges=18 vertices=12 edgeuses=4..4 shells=2 regions=2 area=51.933998
-AOIM_RESET_INFINITE ok old_infinite=RegionId(0)
-AOIM_EDGE_ORIENT same=2..2 opposite=2..2
-AOIM_VOLUME err=Unported { upstream: "SmSurface::DropCurve", unit: "intersect.surface_drop_lib_p3" }
-AOIM_FACE_SHELLS faces=8 each_face_two_distinct_shells=true
-AOIM_ORIENT err=Unported { upstream: "SmBrep::CalculateBoundingBox", unit: "query.brep" }
-AOIM_PROBE_PASS order=caps-first
-...
-AOIM_PROBE_PASS order=sides-first
-```
+| case | profile | contour | F / E / V | area |
+|---|---|---:|---:|---:|
+| 90° baseline | `[0, 2]` | 6 | 8 / 18 / 12 | 51.933998 |
+| 90° symmetric | `[-2, 2]` | 7 | 9 / 21 / 14 | 105.358356 |
+| 30° | `[-2, 2]` | 7 | 9 / 21 / 14 | 88.382434 |
+| 150° | `[-2, 2]` | 7 | 9 / 21 / 14 | 127.197778 |
+| 179° (`line_length=500`) | `[-2, 2]` | 7 | 9 / 21 / 14 | 2492.149982 |
 
-Interpretation:
+For every case:
+
+- each edge has 4 edge uses, with 2 `Same` and 2 `Opposite`;
+- each face has one faceuse in the void shell and one in the solid shell;
+- the two shells are `Region0` (void) and `Region1` (solid); the split already
+  leaves the flags correct;
+- both `caps-first` and `sides-first` orders pass;
+- the last face still reports the p6 `TestClosureSplitRegion` tail, but the
+  split is complete and the probe's assertions pass.
+
+Other observations:
 
 - `create_pyramid` builds all planar faces and then stops at
   `SmBrep::StitchFaces`; face construction is not the problem for the old path.
@@ -250,34 +243,28 @@ Interpretation:
 - The direct wire-edge + `make_face_topology` path shares edges and builds a
   box; its single shell contains both faceuses of every face, so it is not a
   split solid (a useful contrast, not the target).
-- The 90-degree AOIM prism completes as a two-region solid: 8/18/12,
-  4 edge uses per edge, one void and one solid region, and each face has one
-  faceuse in each shell.
-- Reversing the bottom cap loop fixes the cap orientation: both face order
-  variants then give 8 Same / 8 Opposite per shell instead of 7/1.
-- Reversing the order of face creation (caps first versus sides first) changes
-  only which face is last; both variants pass.
-- The split already leaves `void = 1` for Region 0 and `void = 0` for the solid
-  Region 1, with `infinite = Region 0`; `reset_infinite_region` is a before/after
-  no-op consistency check.
+- Reversing the bottom cap loop fixes the cap orientation; without it the split
+  is 7/1 instead of 8/0 or 9/0.
+- The negative `d0` adds a tangent Line–Arc segment, hence 7 contour segments
+  and 9 faces for the symmetric profile.
 - `brep_volume` is blocked by `SmSurface::DropCurve`
   (`intersect.surface_drop_lib_p3`), so volume is not numerically certified.
 - `orient_trimmed_surfaces` is blocked by `CalculateBoundingBox`
   (`query.brep`), so outward-normal unification is not certified.
-- The new shell has 8 faceuses but its `Shell.faces` list is empty; the
-  faceuse list is authoritative for the queries used here, but this cache
+- The new shell has one faceuse per face but its `Shell.faces` list is empty;
+  the faceuse list is authoritative for the queries used here, but this cache
   should be checked when the p6 tail is completed.
-
 ## Implementation order
 
 1. Keep the plan and probes in this research branch; do not claim
    `topology.brep_p4`, `topology.brep_p6` or implement replacement topology
    storage.
-2. The 90-degree six-segment prism probe is complete and passing. Keep the
-   builder and its assertions; `reset_infinite_region` is optional (the split
-   already leaves the correct flags), but useful as a list-head check.
-3. Extend the same direct builder to `30/150/179`, negative-profile and
-   L/T-style contours. Keep the bottom-cap loop reversal.
+2. Keep the 90° baseline as the regression test. The generalized builder has
+   also passed 90/30/150/179 with `[-2, 2]` and the Line–Arc tangent segment;
+   both face orders pass.
+3. Keep the bottom-cap loop reversal and the checked `reset_infinite_region`
+   confirmation. Next profile class is L/T; do not change the direct topology
+   strategy.
 4. Cross-check volume and area against the existing 2D hybrid and 3D mesh.
    Volume validation remains blocked until `SmSurface::DropCurve` and
    `CalculateBoundingBox` are available; do not substitute a guessed volume.
@@ -290,7 +277,7 @@ Interpretation:
 ## Decision
 
 Direct shared-topology construction is the chosen architecture and has produced
-the first closed AOIM B-rep for the 90-degree prism. The remaining gaps are
+closed AOIM B-reps for 90/30/150/179 with exact plane/cylinder side surfaces. The remaining gaps are
 validation and generic-case completion:
 `TestClosureSplitRegion` tail (`topology.brep_p6`), `CalculateBoundingBox`
 (`query.brep`) and `SmSurface::DropCurve`

@@ -490,18 +490,20 @@ concrete face/assembly plan are in [`BREP_PLAN.md`](BREP_PLAN.md). Reproducible
 public-API probes are in [`probes/brep_probe`](probes/brep_probe); the Russian
 technical report is [`BREP_REPORT_RU.md`](BREP_REPORT_RU.md).
 
-The direct path produced the first closed AOIM B-rep: `make_shell_vertex` +
+The direct path produced closed AOIM B-reps for the Line–Arc cases:
+`make_shell_vertex` +
 `make_wire_edge` build the shared vertices and edges, and `make_face_topology`
 builds each face from the existing edge uses, creating the next edge-use pair on
-shared edges. The 90-degree prism has 8 faces, 18 edges, 12 vertices, 4 edge
-uses per edge, one void and one solid region, and one faceuse per face in each
-shell. The bottom cap loop must be reversed so the cap orientation matches the
-other faces.
+shared edges. The 90° baseline has 8 faces, 18 edges and 12 vertices; the
+symmetric `[-2,2]` 90/30/150/179 cases add the negative-`d` tangent segment and
+have 9 faces, 21 edges and 14 vertices. Every case has 4 edge uses per edge, one
+void and one solid region, and one faceuse per face in each shell. The bottom
+cap loop must be reversed so the cap orientation matches the other faces.
 
 `TestClosureSplitRegion` still returns `Unported` from its omitted p6 tail, but
-the split itself is complete. `reset_infinite_region` on the known pre-split
-infinite region sets the void/solid flags; both caps-first and sides-first
-orders pass. Volume and outward-normal checks remain blocked by
+the split itself is complete and already leaves the void/solid flags correct;
+`reset_infinite_region` only confirms them. Both caps-first and sides-first
+orders pass for all cases. Volume and outward-normal checks remain blocked by
 `SmSurface::DropCurve` and `CalculateBoundingBox`.
 
 The old stitch path still stops at `SmBrep::StitchFaces`
