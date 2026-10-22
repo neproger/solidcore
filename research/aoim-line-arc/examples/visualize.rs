@@ -9,6 +9,9 @@
 //! The example writes `out/aoim-line-arc-{30,90,150}.svg` and `out/index.html`.
 //! It uses only the research crate and `std`; it never touches SolidCore.
 
+use aoim_line_arc_research::sweep::{
+    build_regions, build_untrimmed, BuiltRegions, RegionError, Strategy,
+};
 use aoim_line_arc_research::{LineArc, Point2};
 use std::fmt::Write as _;
 use std::fs;
@@ -31,6 +34,7 @@ const ARC_COLOR: &str = "#d9822b";
 const FINITE_COLOR: &str = "#1f8a4c";
 const EXTENSION_COLOR: &str = "#e08a2e";
 const LIMIT_COLOR: &str = "#c0392b";
+const HYBRID_COLOR: &str = "#7b4fb3";
 
 #[derive(Clone, Copy)]
 struct Bounds {
@@ -239,11 +243,15 @@ impl Canvas {
     }
 
     fn finish(self, title: &str) -> String {
+        self.finish_sized(title, HEIGHT)
+    }
+
+    fn finish_sized(self, title: &str, height: f64) -> String {
         format!(
-            "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{WIDTH}\" height=\"{HEIGHT}\" \
-             viewBox=\"0 0 {WIDTH} {HEIGHT}\">\n\
+            "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{WIDTH}\" height=\"{height}\" \
+             viewBox=\"0 0 {WIDTH} {height}\">\n\
              <title>{title}</title>\n\
-             <rect x=\"0\" y=\"0\" width=\"{WIDTH}\" height=\"{HEIGHT}\" fill=\"#ffffff\"/>\n\
+             <rect x=\"0\" y=\"0\" width=\"{WIDTH}\" height=\"{height}\" fill=\"#ffffff\"/>\n\
              {}\n</svg>\n",
             self.elements
         )
@@ -697,13 +705,41 @@ fn main() {
         );
     }
 
+    let mut comparisons = String::new();
+    for degrees in [30.0_f64, 90.0, 150.0] {
+        let model = match LineArc::new(RADIUS, degrees.to_radians()) {
+            Ok(model) => model,
+            Err(error) => {
+                eprintln!("cannot build {degrees} deg model: {error:?}");
+                std::process::exit(1);
+            }
+        };
+        let file_name = format!("aoim-vs-hybrid-{degrees:.0}.svg");
+        let path = Path::new(&out_dir).join(&file_name);
+        if let Err(error) = fs::write(&path, render_comparison(&model)) {
+            eprintln!("cannot write {}: {error}", path.display());
+            std::process::exit(1);
+        }
+        let _ = writeln!(
+            comparisons,
+            "<li><a href=\"{file_name}\">{degrees:.0} deg: original vs hybrid</a> \
+             <img src=\"{file_name}\" alt=\"AOIM vs hybrid {degrees:.0} deg\"></li>"
+        );
+    }
+
     let index = format!(
         "<!doctype html>\n<html lang=\"en\"><meta charset=\"utf-8\">\
          <title>AOIM Line-Arc visuals</title>\n\
          <style>body{{font-family:system-ui,sans-serif;margin:2rem;background:#fafafa}}\
          li{{list-style:none;margin:2rem 0}}img{{max-width:1000px;width:100%;\
          border:1px solid #ddd;background:#fff}}a{{color:#2f6fbf}}</style>\n\
-         <h1>AOIM Line-Arc — geometric visuals</h1>\n\
+         <h1>AOIM Line-Arc - geometric visuals</h1>\n\
+         <h2>Original AOIM vs hybrid at junction</h2>\n\
+         <p>Four panels: original construction, hybrid construction, original regions, \
+         hybrid trimmed regions. Purple is the linear seam on the extensions; green is the \
+         AOIM seam on the finite side.</p>\n\
+         <ul>{comparisons}</ul>\n\
+         <h2>Single-strategy figures</h2>\n\
          <p>Top: offset construction. Bottom: finite sweep regions and the seam. \
          Green = finite bodies, orange = supporting extensions, red = no real intersection.</p>\n\
          <ul>{links}</ul></html>\n"
@@ -714,4 +750,436 @@ fn main() {
         std::process::exit(1);
     }
     println!("wrote {}", index_path.display());
+}
+
+fn built_bounds(built: &BuiltRegions) -> Bounds {
+    let mut bounds = Bounds::new(
+        f64::INFINITY,
+        f64::NEG_INFINITY,
+        f64::INFINITY,
+        f64::NEG_INFINITY,
+    );
+    for polygon in [&built.line, &built.arc, &built.expected] {
+        for point in &polygon.points {
+            bounds.include(*point);
+        }
+    }
+    bounds
+}
+
+fn draw_hybrid_construction(canvas: &mut Canvas, view: &View, model: &LineArc, panel_top: f64) {
+    let center = model.center();
+    let start = model.arc_start_angle();
+    let end = model.arc_end_angle();
+    let x_end = view.bounds.max_x - 0.3;
+
+    let full_circle = arc_points(model, RADIUS, 0.0, std::f64::consts::TAU, 160);
+    canvas.polyline(view, &full_circle, "#bbbbbb", 1.0, "4 4");
+    canvas.line(
+        view,
+        Point2 {
+            x: -LINE_LENGTH,
+            y: 0.0,
+        },
+        Point2 { x: 0.0, y: 0.0 },
+        "#111111",
+        2.2,
+        "",
+    );
+    canvas.polyline(
+        view,
+        &arc_points(model, RADIUS, start, end, 100),
+        "#111111",
+        2.2,
+        "",
+    );
+    canvas.dot(view, center, 3.0, "#111111");
+    canvas.dot(view, Point2 { x: 0.0, y: 0.0 }, 3.5, "#111111");
+
+    for d in [PROFILE_MIN, -0.25 * RADIUS, 0.0, 0.25 * RADIUS, PROFILE_MAX] {
+        let line_end = if d < 0.0 {
+            model
+                .junction_linear_point(d)
+                .map(|point| point.x)
+                .unwrap_or(x_end)
+        } else {
+            x_end
+        };
+        canvas.line(
+            view,
+            Point2 {
+                x: -LINE_LENGTH,
+                y: -d,
+            },
+            Point2 { x: line_end, y: -d },
+            LINE_COLOR,
+            1.1,
+            "",
+        );
+        let radius = RADIUS + d;
+        if radius > 0.0 {
+            let circle = arc_points(model, radius, 0.0, std::f64::consts::TAU, 120);
+            canvas.polyline(view, &circle, ARC_COLOR, 1.0, "");
+        }
+        if d < 0.0 {
+            if let (Ok(joint), Ok(seam)) =
+                (model.joint_arc_point(d), model.junction_linear_point(d))
+            {
+                canvas.line(view, joint, seam, HYBRID_COLOR, 2.0, "");
+                canvas.dot(view, joint, 3.2, HYBRID_COLOR);
+                canvas.dot(view, seam, 3.6, EXTENSION_COLOR);
+            }
+        } else if let Ok(point) = model.intersect_offsets(d) {
+            canvas.dot(view, point, 3.6, FINITE_COLOR);
+        }
+    }
+
+    let straight_end = model.junction_linear_point(PROFILE_MIN).unwrap();
+    canvas.line(
+        view,
+        Point2 { x: 0.0, y: 0.0 },
+        straight_end,
+        HYBRID_COLOR,
+        2.8,
+        "",
+    );
+    canvas.polyline(
+        view,
+        &seam_points(model, 0.0, PROFILE_MAX, 160),
+        FINITE_COLOR,
+        2.8,
+        "",
+    );
+    let vertex = model.vertex();
+    canvas.dot(view, vertex, 4.0, LIMIT_COLOR);
+
+    legend(
+        canvas,
+        18.0,
+        panel_top + 56.0,
+        &[
+            (LINE_COLOR, "offset line"),
+            (ARC_COLOR, "offset circle"),
+            (FINITE_COLOR, "AOIM seam, d>=0"),
+            (HYBRID_COLOR, "linear seam + tangent extension, d<0"),
+            (EXTENSION_COLOR, "seam point on extension"),
+            (LIMIT_COLOR, "no real intersection"),
+        ],
+    );
+    canvas.text(
+        18.0,
+        panel_top + 2.0,
+        15.0,
+        "start",
+        "#111111",
+        &format!(
+            "{:.0} deg: hybrid at junction, R={:.0}",
+            model.corner_angle_rad.to_degrees(),
+            RADIUS
+        ),
+    );
+}
+
+fn draw_built_regions(
+    canvas: &mut Canvas,
+    view: &View,
+    model: &LineArc,
+    built: &BuiltRegions,
+    panel_top: f64,
+    title: &str,
+    negative_color: &str,
+) {
+    canvas.polygon(view, &built.line.points, LINE_COLOR, 0.24, LINE_COLOR, 1.6);
+    canvas.polygon(view, &built.arc.points, ARC_COLOR, 0.24, ARC_COLOR, 1.6);
+    canvas.line(
+        view,
+        Point2 {
+            x: -LINE_LENGTH,
+            y: 0.0,
+        },
+        Point2 { x: 0.0, y: 0.0 },
+        "#111111",
+        1.6,
+        "",
+    );
+    canvas.polyline(
+        view,
+        &arc_points(
+            model,
+            RADIUS,
+            model.arc_start_angle(),
+            model.arc_end_angle(),
+            100,
+        ),
+        "#111111",
+        1.6,
+        "",
+    );
+
+    let negative: Vec<Point2> = built
+        .seam
+        .iter()
+        .filter(|sample| sample.d <= 0.0)
+        .map(|sample| sample.point)
+        .collect();
+    let positive: Vec<Point2> = built
+        .seam
+        .iter()
+        .filter(|sample| sample.d >= 0.0)
+        .map(|sample| sample.point)
+        .collect();
+    canvas.polyline(view, &negative, negative_color, 3.0, "");
+    canvas.polyline(view, &positive, FINITE_COLOR, 3.0, "");
+    canvas.dot(view, model.vertex(), 4.0, LIMIT_COLOR);
+
+    let raster = built.raster;
+    let box_height = 92.0;
+    canvas.rect(
+        (18.0, panel_top + 44.0, 380.0, box_height),
+        "#ffffff",
+        0.93,
+        "#cccccc",
+        1.0,
+    );
+    canvas.text(
+        28.0,
+        panel_top + 64.0,
+        10.0,
+        "start",
+        "#333333",
+        &format!(
+            "areas: line={:.3} arc={:.3} expected={:.3}",
+            built.line.area(),
+            built.arc.area(),
+            built.expected.area()
+        ),
+    );
+    canvas.text(
+        28.0,
+        panel_top + 80.0,
+        10.0,
+        "start",
+        "#333333",
+        &format!(
+            "line+arc-expected = {:+.2e} ({:+.2e})",
+            built.area_balance, built.area_balance_fraction
+        ),
+    );
+    canvas.text(
+        28.0,
+        panel_top + 96.0,
+        10.0,
+        "start",
+        "#333333",
+        &format!(
+            "raster overlap={:.2e} gap={:.2e} sym={:.2e}",
+            raster.overlap_area / raster.expected_area,
+            raster.gap_area / raster.expected_area,
+            raster.symmetric_difference_fraction
+        ),
+    );
+    canvas.text(
+        28.0,
+        panel_top + 112.0,
+        10.0,
+        "start",
+        if built.self_intersecting {
+            LIMIT_COLOR
+        } else {
+            "#333333"
+        },
+        &format!("self-intersecting = {}", built.self_intersecting),
+    );
+    canvas.text(18.0, panel_top + 2.0, 15.0, "start", "#111111", title);
+}
+
+fn draw_original_regions(canvas: &mut Canvas, view: &View, model: &LineArc, panel_top: f64) {
+    match build_regions(
+        model,
+        Strategy::Analytical,
+        PROFILE_MIN,
+        PROFILE_MAX,
+        20.0,
+        401,
+        96,
+    ) {
+        Ok(built) => draw_built_regions(
+            canvas,
+            view,
+            model,
+            &built,
+            panel_top,
+            &format!(
+                "{:.0} deg: original AOIM, closed trim",
+                model.corner_angle_rad.to_degrees()
+            ),
+            EXTENSION_COLOR,
+        ),
+        Err(RegionError::UncoveredProfile { first_missing }) => {
+            let (line, arc, untrimmed) =
+                build_untrimmed(model, PROFILE_MIN, PROFILE_MAX, 20.0, 96, 600).unwrap();
+            canvas.polygon(view, &line.points, LINE_COLOR, 0.24, LINE_COLOR, 1.6);
+            canvas.polygon(view, &arc.points, ARC_COLOR, 0.24, ARC_COLOR, 1.6);
+            canvas.line(
+                view,
+                Point2 {
+                    x: -LINE_LENGTH,
+                    y: 0.0,
+                },
+                Point2 { x: 0.0, y: 0.0 },
+                "#111111",
+                1.6,
+                "",
+            );
+            canvas.polyline(
+                view,
+                &arc_points(
+                    model,
+                    RADIUS,
+                    model.arc_start_angle(),
+                    model.arc_end_angle(),
+                    100,
+                ),
+                "#111111",
+                1.6,
+                "",
+            );
+            let minimum = model.min_offset();
+            let visible = seam_points(model, minimum.max(PROFILE_MIN), PROFILE_MAX, 160);
+            let negative: Vec<Point2> = visible
+                .iter()
+                .copied()
+                .filter(|point| point.y >= 0.0)
+                .collect();
+            let positive: Vec<Point2> = visible
+                .iter()
+                .copied()
+                .filter(|point| point.y <= 0.0)
+                .collect();
+            canvas.polyline(view, &negative, EXTENSION_COLOR, 2.2, "7 5");
+            canvas.polyline(view, &positive, FINITE_COLOR, 2.8, "");
+            canvas.dot(view, model.vertex(), 4.0, LIMIT_COLOR);
+
+            canvas.rect(
+                (18.0, panel_top + 44.0, 400.0, 82.0),
+                "#ffffff",
+                0.93,
+                "#cccccc",
+                1.0,
+            );
+            canvas.text(
+                28.0,
+                panel_top + 66.0,
+                10.0,
+                "start",
+                LIMIT_COLOR,
+                &format!("AOIM seam undefined below d_min={minimum:.4}",),
+            );
+            canvas.text(
+                28.0,
+                panel_top + 82.0,
+                10.0,
+                "start",
+                "#333333",
+                &format!(
+                    "first missing d={first_missing:.4}; untrimmed overlap={:.3}",
+                    untrimmed.overlap_area
+                ),
+            );
+            canvas.text(
+                28.0,
+                panel_top + 98.0,
+                10.0,
+                "start",
+                "#333333",
+                "no closed original AOIM regions for this profile",
+            );
+            canvas.text(
+                18.0,
+                panel_top + 2.0,
+                15.0,
+                "start",
+                "#111111",
+                &format!(
+                    "{:.0} deg: original AOIM, uncovered profile",
+                    model.corner_angle_rad.to_degrees()
+                ),
+            );
+        }
+        Err(error) => {
+            canvas.text(
+                18.0,
+                panel_top + 28.0,
+                12.0,
+                "start",
+                LIMIT_COLOR,
+                &format!("cannot build original AOIM regions: {error:?}"),
+            );
+        }
+    }
+}
+
+fn render_comparison(model: &LineArc) -> String {
+    let stride = PANEL_HEIGHT + PANEL_GAP;
+    let tops = [
+        30.0,
+        30.0 + stride,
+        30.0 + 2.0 * stride,
+        30.0 + 3.0 * stride,
+    ];
+    let mut canvas = Canvas::new();
+
+    let construction_view = View::new(construction_bounds(model), tops[0]);
+    draw_construction(&mut canvas, &construction_view, model);
+
+    let mut hybrid_bounds = construction_bounds(model);
+    hybrid_bounds.include(model.junction_linear_point(PROFILE_MIN).unwrap());
+    hybrid_bounds.include(model.joint_arc_point(PROFILE_MIN).unwrap());
+    let hybrid_construction_view = View::new(hybrid_bounds, tops[1]);
+    draw_hybrid_construction(&mut canvas, &hybrid_construction_view, model, tops[1]);
+
+    let original_view = View::new(sweep_bounds(model), tops[2]);
+    draw_original_regions(&mut canvas, &original_view, model, tops[2]);
+
+    let hybrid = build_regions(
+        model,
+        Strategy::HybridAtJunction,
+        PROFILE_MIN,
+        PROFILE_MAX,
+        20.0,
+        401,
+        96,
+    )
+    .unwrap();
+    let hybrid_view = View::new(built_bounds(&hybrid), tops[3]);
+    draw_built_regions(
+        &mut canvas,
+        &hybrid_view,
+        model,
+        &hybrid,
+        tops[3],
+        &format!(
+            "{:.0} deg: hybrid AOIM, closed trim",
+            model.corner_angle_rad.to_degrees()
+        ),
+        HYBRID_COLOR,
+    );
+
+    for top in &tops[1..] {
+        canvas.screen_line(
+            (20.0, top - 20.0),
+            (WIDTH - 20.0, top - 20.0),
+            "#dddddd",
+            1.0,
+            "",
+        );
+    }
+    let height = tops[3] + PANEL_HEIGHT + 30.0;
+    canvas.finish_sized(
+        &format!(
+            "AOIM original vs hybrid, {:.0} deg",
+            model.corner_angle_rad.to_degrees()
+        ),
+        height,
+    )
 }

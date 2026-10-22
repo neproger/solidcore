@@ -226,6 +226,104 @@ impl LineArc {
         parameter
     }
 
+    /// Profile point on the *supporting arc* at the joint for offset `d`.
+    ///
+    /// This is `Q0(d) = (-d sin α, -d cos α)`. It is the start of the finite
+    /// arc for `d = 0` and the arc-side cross-section for other offsets.
+    pub fn joint_arc_point(&self, d: f64) -> Result<Point2, GeometryError> {
+        if !d.is_finite() {
+            return Err(GeometryError::InvalidParameters);
+        }
+        if self.radius + d <= 0.0 {
+            return Err(GeometryError::CollapsedOffsetCircle);
+        }
+        Ok(Point2 {
+            x: -d * self.corner_angle_rad.sin(),
+            y: -d * self.corner_angle_rad.cos(),
+        })
+    }
+
+    /// Unit tangent of the arc at the joint, `(cos α, -sin α)`.
+    pub fn joint_tangent(&self) -> Point2 {
+        Point2 {
+            x: self.corner_angle_rad.cos(),
+            y: -self.corner_angle_rad.sin(),
+        }
+    }
+
+    /// Straight-miter point on the external bisector through the joint.
+    ///
+    /// This is the intersection of `y = -d` with the tangent continuation of
+    /// the arc offset at the joint:
+    ///
+    /// `Q(d) = (-d tan(α/2), -d)`.
+    ///
+    /// For `d < 0` this lies on the forward line extension and on the backward
+    /// tangent extension of the arc. It is defined without the AOIM
+    /// discriminant, so it also covers `d < d_min`.
+    pub fn junction_linear_point(&self, d: f64) -> Result<Point2, GeometryError> {
+        if !d.is_finite() {
+            return Err(GeometryError::InvalidParameters);
+        }
+        if self.radius + d <= 0.0 {
+            return Err(GeometryError::CollapsedOffsetCircle);
+        }
+        let half = 0.5 * self.corner_angle_rad;
+        let tangent = half.sin() / half.cos();
+        let point = Point2 {
+            x: -d * tangent,
+            y: -d,
+        };
+        if !point.is_finite() {
+            return Err(GeometryError::NonFiniteResult);
+        }
+        Ok(point)
+    }
+
+    /// Straight-miter point on the external bisector through the parabola
+    /// vertex `V`, used to test the "switch at the limit" strategy.
+    ///
+    /// The line is parallel to the junction bisector but passes through `V`.
+    pub fn limit_linear_point(&self, d: f64) -> Result<Point2, GeometryError> {
+        if !d.is_finite() {
+            return Err(GeometryError::InvalidParameters);
+        }
+        if self.radius + d <= 0.0 {
+            return Err(GeometryError::CollapsedOffsetCircle);
+        }
+        let vertex = self.vertex();
+        let sin_alpha = self.corner_angle_rad.sin();
+        let one_plus_cos = 1.0 + self.corner_angle_rad.cos();
+        let parameter = (-d - vertex.y) / one_plus_cos;
+        let point = Point2 {
+            x: vertex.x + parameter * sin_alpha,
+            y: -d,
+        };
+        if !point.is_finite() {
+            return Err(GeometryError::NonFiniteResult);
+        }
+        Ok(point)
+    }
+
+    /// Straight-line point on the *internal* bisector through the joint.
+    ///
+    /// `Q_int(d) = (d / tan(α/2), -d)`. This is used only as a negative
+    /// control: the connector from the arc joint is not tangent to the arc.
+    pub fn internal_junction_point(&self, d: f64) -> Result<Point2, GeometryError> {
+        if !d.is_finite() {
+            return Err(GeometryError::InvalidParameters);
+        }
+        if self.radius + d <= 0.0 {
+            return Err(GeometryError::CollapsedOffsetCircle);
+        }
+        let half = 0.5 * self.corner_angle_rad;
+        let tangent = half.sin() / half.cos();
+        Ok(Point2 {
+            x: d / tangent,
+            y: -d,
+        })
+    }
+
     /// Implicit equation `F(x, y) = 0` of the local miter parabola.
     ///
     /// `x² - 2 R sin α x + 2 R (1 - cos α) y = 0`.
@@ -256,6 +354,9 @@ impl LineArc {
         -half.sin() / half.cos()
     }
 }
+
+pub mod continuing;
+pub mod sweep;
 
 #[cfg(test)]
 mod tests {
