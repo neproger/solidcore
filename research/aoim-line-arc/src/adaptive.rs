@@ -275,6 +275,53 @@ impl AdaptivePath {
         }
     }
 
+    /// Event-driven variant: preserve the arc until the first topology-valid cut.
+    ///
+    /// This ignores a caller miter cap and selects the smallest cut for which
+    /// the straight-body construction is already valid. It is **not** the AOIM
+    /// loss event: for the inflected geometry the AOIM contact occurs before
+    /// the finite arc starts, so it does not define an arc cut. The event that
+    /// does define a cut is the first valid straight transition.
+    ///
+    /// `max_path_deviation` is still enforced. The resulting miter may exceed
+    /// a separate miter cap; the caller can compare it with [`Self::solve`].
+    pub fn solve_event_driven(
+        model: LineArc,
+        d0: f64,
+        d1: f64,
+        line_length: f64,
+        max_path_deviation: f64,
+    ) -> Result<Self, AdaptiveError> {
+        let alpha = model.corner_angle_rad;
+        let untouched = AdaptiveCut {
+            theta: -alpha,
+            cut_point: Point2 { x: 0.0, y: 0.0 },
+            tangent_point: Point2 { x: 0.0, y: 0.0 },
+            tangent_length: 0.0,
+            removed_arc_angle: 0.0,
+            remaining_arc_angle: alpha,
+            miter_length: 0.0,
+            miter_extent: 0.0,
+            path_deviation: 0.0,
+        };
+        let p0 = line_line_seam(untouched, d0)?;
+        let p1 = line_line_seam(untouched, d1)?;
+        let original_miter = p0.distance_to(p1);
+        let just_below_original = (original_miter * 0.999_999).max(1e-9);
+        Self::solve(
+            model,
+            d0,
+            d1,
+            line_length,
+            AdaptiveParams {
+                max_miter_length: just_below_original,
+                max_path_deviation,
+                preserve_endpoints: true,
+                preserve_tangency: false,
+            },
+        )
+    }
+
     /// Line–line miter point for offset `d` on the modified path.
     pub fn seam_point(&self, d: f64) -> Result<Point2, GeometryError> {
         line_line_seam(self.cut, d)
@@ -882,5 +929,87 @@ mod tests {
             deviation = deviation.max(distance);
         }
         deviation
+    }
+}
+
+#[cfg(test)]
+mod event_tests {
+    use super::*;
+
+    #[test]
+    fn aoim_contact_event_is_before_the_finite_arc() {
+        for degrees in [30.0_f64, 90.0, 150.0, 179.0] {
+            let model = LineArc::new(4.0, degrees.to_radians()).unwrap();
+            let contact = model.vertex();
+            let parameter = model.arc_parameter(contact);
+            assert!(parameter < 0.0, "{degrees}: contact parameter={parameter}");
+        }
+    }
+
+    #[test]
+    fn event_driven_matches_the_first_valid_cut_at_150() {
+        let model = LineArc::new(4.0, 150.0_f64.to_radians()).unwrap();
+        let event = AdaptivePath::solve_event_driven(model, -2.0, 2.0, 20.0, 2.0).unwrap();
+        assert!((event.cut.removed_arc_angle.to_degrees() - 45.94).abs() < 0.2);
+        assert!((event.cut.miter_length - 6.50).abs() < 0.02);
+        assert!((event.cut.path_deviation - 1.256).abs() < 0.02);
+        let regions = event.build_regions(401, 96, 600).unwrap();
+        assert!(!regions.self_intersecting);
+        assert!(regions.area_balance_fraction.abs() < 1e-9);
+    }
+
+    #[test]
+    fn event_driven_saves_arc_at_179_but_exceeds_the_6_5_miter_cap() {
+        let model = LineArc::new(4.0, 179.0_f64.to_radians()).unwrap();
+        let event = AdaptivePath::solve_event_driven(model, -2.0, 2.0, 500.0, 3.0).unwrap();
+        let bounded = AdaptivePath::solve(
+            model,
+            -2.0,
+            2.0,
+            500.0,
+            AdaptiveParams {
+                max_miter_length: 6.5,
+                max_path_deviation: 3.5,
+                preserve_endpoints: true,
+                preserve_tangency: false,
+            },
+        )
+        .unwrap();
+        assert!(event.cut.removed_arc_angle < bounded.cut.removed_arc_angle);
+        assert!(event.cut.path_deviation < bounded.cut.path_deviation);
+        assert!(event.cut.miter_length > 6.5);
+        assert!(event.cut.miter_length < 7.0);
+        let regions = event.build_regions(401, 96, 600).unwrap();
+        assert!(!regions.self_intersecting);
+        assert!(regions.area_balance_fraction.abs() < 1e-9);
+    }
+
+    #[test]
+    fn event_driven_matches_bounded_for_30_and_90() {
+        for (degrees, max_miter, max_deviation) in [(30.0_f64, 4.14_f64, 0.5_f64), (90.0, 5.0, 0.5)]
+        {
+            let model = LineArc::new(4.0, degrees.to_radians()).unwrap();
+            let event =
+                AdaptivePath::solve_event_driven(model, -2.0, 2.0, 20.0, max_deviation).unwrap();
+            let bounded = AdaptivePath::solve(
+                model,
+                -2.0,
+                2.0,
+                20.0,
+                AdaptiveParams {
+                    max_miter_length: max_miter,
+                    max_path_deviation: max_deviation,
+                    preserve_endpoints: true,
+                    preserve_tangency: false,
+                },
+            )
+            .unwrap();
+            assert!(
+                (event.cut.removed_arc_angle - bounded.cut.removed_arc_angle).abs() < 0.02,
+                "{degrees}: event={} bounded={}",
+                event.cut.removed_arc_angle,
+                bounded.cut.removed_arc_angle
+            );
+        }
     }
 }

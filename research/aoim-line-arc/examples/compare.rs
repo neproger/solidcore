@@ -136,5 +136,35 @@ fn main() {
             ),
             Err(error) => println!("adaptive:   {error:?}"),
         }
+
+        match AdaptivePath::solve_event_driven(model, -2.0, 2.0, line_length, max_deviation) {
+            Ok(path) => match path.build_regions(401, 96, 600) {
+                Ok(regions) => {
+                    let (chord, extent) = seam_metrics(&regions.seam, path.cut.cut_point);
+                    println!(
+                        "event:      theta={:.3} deg, A=({:.3},{:.3}), Q=({:.3},{:.3}), \
+                         removed={:.2} deg, miter chord={:.3} extent={:.3}, dev={:.3}, \
+                         expected={:.3} (delta={:+.3}), overlap={:.2e} gap={:.2e} sym={:.2e} self={}",
+                        path.cut.theta.to_degrees(),
+                        path.cut.cut_point.x,
+                        path.cut.cut_point.y,
+                        path.cut.tangent_point.x,
+                        path.cut.tangent_point.y,
+                        path.cut.removed_arc_angle.to_degrees(),
+                        chord,
+                        extent,
+                        path.cut.path_deviation,
+                        regions.expected.area(),
+                        regions.expected.area() - hybrid_area,
+                        regions.raster.overlap_area / regions.raster.expected_area,
+                        regions.raster.gap_area / regions.raster.expected_area,
+                        regions.raster.symmetric_difference_fraction,
+                        regions.self_intersecting,
+                    );
+                }
+                Err(error) => println!("event:      cut ok, regions failed ({error:?})"),
+            },
+            Err(error) => println!("event:      {error:?}"),
+        }
     }
 }

@@ -176,6 +176,49 @@ This experiment is for the inflected `LineArc` model. The continuing-turn
 model is not yet wired into `AdaptivePath`; its hybrid counterexample below is
 the reason a curvature-aware adaptive builder is still required.
 
+### Event-driven variant: what the first event actually is
+
+`AdaptivePath::solve_event_driven` implements the contact-limited idea by
+selecting the first topology-valid cut instead of a cut chosen only by the
+miter cap.
+
+The first candidate event is the AOIM loss at `d_min`. Its contact point is the
+parabola vertex `V`. Relative to the circle center, `V` is at angle `π/2`, while
+the finite arc starts at `3π/2 - α`; its arc parameter is `α - π`, which is
+negative for every valid `α`. **The AOIM contact event therefore occurs before
+the finite arc begins and does not define an arc cut.** Preserving the arc until
+that event means using the hybrid at the joint, not making an adaptive cut.
+
+The first event that *does* constrain the adaptive cut is the topology of the
+straight-body quadrilateral: the line–line seam and the `Q` cross-section stop
+crossing. The existing adaptive solver already uses exactly this condition as a
+validity constraint; it is why a too-small cut is rejected.
+
+Comparison (same inputs as the table above):
+
+| alpha | miter-bounded removed / miter / dev | event-driven removed / miter / dev |
+|---|---|---|
+| 30° | 5.61° / 4.092 / 0.019 | 5.61° / 4.092 / 0.019 |
+| 90° | 19.52° / 4.898 / 0.230 | 19.52° / 4.898 / 0.230 |
+| 150° | 46.03° / 6.495 / 1.260 | 45.94° / 6.502 / 1.256 |
+| 170° | 65.98° / 6.498 / 2.445 | 61.20° / 6.871 / 2.190 |
+| 175° | 70.98° / 6.498 / 2.779 | 65.73° / 6.911 / 2.496 |
+| 179° | 75.07° / 6.492 / 3.059 | 69.59° / 6.923 / 2.762 |
+
+Conclusions:
+
+- At `30/90/150°` the miter-bounded cut already **is** the first valid cut;
+  there is no evidence that it cuts too early.
+- At `170/175/179°` the event-driven cut saves roughly `4.8–5.5°` of arc and
+  `0.25–0.30` path deviation, but the miter rises to `6.87–6.92`, slightly above
+  the `6.5` cap. This is a real but small Pareto improvement.
+- The apparent “too early” cut at `179°` is the price of the user’s miter cap:
+  preserving the arc longer makes the miter longer, not invalid. If the cap is
+  relaxed to about `7.0`, the event-driven cut is preferable; if the cap is
+  `6.5`, the current miter-bounded cut is necessary.
+- The AOIM-loss event is not a substitute for a miter cap; the topology event
+  is the proper lower bound on the cut.
+
 ### Strategy summary
 
 | strategy | strong point | limitation | preferred use |
@@ -185,6 +228,7 @@ the reason a curvature-aware adaptive builder is still required.
 | `HybridAtLimitTangent` | preserves the AOIM curve to the limit | the vertex tangent is parallel to the line offsets, so no seam exists below the limit | diagnostic only |
 | `HybridAtLimitBisector` | can close the area | connector is not tangent and varies with `d`; not a linear sweep continuation | diagnostic only |
 | `AdaptivePath` | bounds the miter; controlled, measurable path deviation; 2D-valid | changes the path and area; G0 at `A`; infeasible for tight bounds; requires explicit CAD authorisation | sharp/opposite tangents where the long wedge is unacceptable |
+| `solve_event_driven` | first topology-valid cut; minimal arc modification for a relaxed miter cap | miter may exceed a tight cap; same path/area change; G0 at `A` | when the miter cap can be relaxed to `~7` and minimal path modification is preferred |
 
 ## Counterexample: continuing-turn arc
 
@@ -203,7 +247,7 @@ cd research/aoim-line-arc
 cargo test
 ```
 
-The suite currently has **43 tests**. They cover:
+The suite currently has **47 tests**. They cover:
 
 - the original AOIM algebra, independent bisection, focus/directrix, existence limit, tangency, scaling, and invalid inputs;
 - hybrid seam construction, tangent parameter sign, C1 continuity at `P`, and boundary sharing;
@@ -213,6 +257,7 @@ The suite currently has **43 tests**. They cover:
 - wide, near-collapse, shallow, and steep profiles;
 - the continuing-turn counterexample (`d_max`, forward tangent parameter, backward-ray distance, extension inside the line body);
 - adaptive-path cuts for `30/90/150/170/175/179°`, bounded miter and deviation, G1 at `Q`, G0 at `A`, far-endpoint preservation, dense independent path-deviation confirmation, and infeasible/tangency-required/no-cut cases;
+- event-driven first-valid cuts, the `150/179°` comparison against the miter-bounded cut, and the proof-by-parameter that the AOIM contact event lies before the finite arc;
 - adaptive three-part area balance, raster overlap/gap/symdiff, self-intersection, and the comparison that the adaptive miter is shorter than the hybrid wedge.
 
 The original checks that substituted `P(d)` back into the parabola were **self-confirming**: both sides came from the same two offset equations. They are kept, but the independent bisection, geometric bisector, and 2D region checks are the ones that can detect a branch, sign, or prolongation error.
@@ -241,9 +286,9 @@ gitignored.
 
 `metrics` prints the hybrid area/raster table and connector kinematics.
 `adaptive` prints the cut search and adaptive region metrics for all angles.
-`compare` runs analytical, hybrid, and adaptive on the same `R`, profile, and
-line length, printing miter chord/extent, path deviation, area difference,
-overlap/gap/symdiff, and self-intersection.
+`compare` runs analytical, hybrid, miter-bounded adaptive, and event-driven
+adaptive on the same `R`, profile, and line length, printing miter chord/extent,
+path deviation, area difference, overlap/gap/symdiff, and self-intersection.
 
 ## Research status / next step
 
@@ -279,4 +324,5 @@ domains, B-rep topology/sewing, or performance relative to SMLib.
 5. Only then attempt two neighbouring B-rep pieces with shared topology.
 
 **No upstream PR is intended until that evidence exists.**
+
 
