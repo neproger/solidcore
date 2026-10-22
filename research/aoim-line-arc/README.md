@@ -71,6 +71,26 @@ The suite currently has 12 tests:
 
 The original checks that substituted `P(d)` back into the parabola were **self-confirming**: both sides came from the same two offset equations. They are kept, but the independent bisection and bisector tests are the ones that can actually detect a branch or sign error.
 
+## Visualize
+
+```sh
+cargo run --example visualize
+```
+
+This writes `out/index.html` and `out/aoim-line-arc-{30,90,150}.svg` (the `out/`
+directory is gitignored). Each figure has two panels:
+
+- top: the supporting line, the arc, representative offset lines/circles, the
+  intersection points `P(d)`, and the miter branch;
+- bottom: the finite line-strip and arc-annulus sweep regions, the sampled seam,
+  and a profile-offset bar.
+
+Colour key: blue = line sweep, orange = arc sweep, green = seam on finite bodies
+(`d >= 0`), dashed orange = seam on supporting extensions (`d < 0`), red = no real
+intersection. The `150°` figure is the clearest counterexample: the red part of
+the profile bar has no AOIM point at all, and the seam stops at the parabola
+vertex instead of reaching the profile edge.
+
 ## Research status / next step
 
 **Confirmed:** the selected offset intersections are the equidistant locus of the supporting line and circle on `d ≥ d_min`; the closed form agrees with an independent numerical solver; the finite-segment split and the sharp-corner coverage limit are reproducible.
