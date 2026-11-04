@@ -1,0 +1,21 @@
+[package]
+name = "universal-miter-prototype"
+description = "Isolated research prototype for the universal planar-sweep miter curve"
+edition.workspace = true
+license.workspace = true
+version.workspace = true
+rust-version.workspace = true
+publish = false
+
+[features]
+default = []
+# Integration level B. Off by default: the mathematical prototype (level A)
+# must build without the kernel. `cargo test --features solidcore` wires the
+# real `solidcore` types in `src/solidcore_api.rs`.
+solidcore = ["dep:solidcore"]
+
+[dependencies]
+solidcore = { path = "../../../crates/solidcore", optional = true }
+
+[lints]
+workspace = true

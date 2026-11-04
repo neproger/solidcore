@@ -1,0 +1,26 @@
+[workspace]
+resolver = "2"
+members = ["prototype"]
+
+# A separate workspace: the repository root never builds this crate. The
+# prototype's optional `solidcore` feature points at `crates/solidcore`; the
+# default build is the pure mathematical prototype.
+
+[workspace.package]
+edition = "2021"
+license = "Apache-2.0"
+version = "0.1.0"
+rust-version = "1.85"
+
+[workspace.lints.rust]
+unsafe_code = "deny"
+missing_docs = "warn"
+
+[workspace.lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+indexing_slicing = "deny"
+todo = "deny"
+unimplemented = "deny"
