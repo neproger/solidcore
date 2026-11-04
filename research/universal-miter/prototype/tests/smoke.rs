@@ -1,11 +1,11 @@
-//! Infrastructure smoke test: the harness is wired, the algorithm is not.
-//!
-//! This test must stay independent of the kernel (level A). The level B check
-//! is `cargo test --features solidcore`, handled separately.
+#![allow(clippy::expect_used, clippy::unwrap_used, clippy::panic)]
+
+//! Infrastructure smoke test: the harness is wired, `Original` is not
+//! implemented at level A, and `Universal` runs a simple case.
 
 use universal_miter_prototype::curve::CurveSpec;
 use universal_miter_prototype::harness::{
-    run_case, MiterError, MiterStrategy, MiterTestCase, ProfileSpec,
+    run_case, MiterError, MiterStatus, MiterStrategy, MiterTestCase, ProfileSpec,
 };
 
 /// The test's failure value; `Result<(), _>` implements `Termination` for a
@@ -34,13 +34,20 @@ fn line_line_case() -> MiterTestCase {
 }
 
 #[test]
-fn both_strategies_are_not_implemented_yet() -> Result<(), UnexpectedResult> {
+fn original_is_not_implemented_and_universal_runs() -> Result<(), UnexpectedResult> {
     let case = line_line_case();
-    for strategy in [MiterStrategy::Original, MiterStrategy::Universal] {
-        match run_case(&case, strategy) {
-            Err(MiterError::NotImplemented) => {}
-            _ => return Err(UnexpectedResult),
-        }
+    match run_case(&case, MiterStrategy::Original) {
+        Err(MiterError::NotImplemented) => {}
+        _ => return Err(UnexpectedResult),
+    }
+    let Ok(result) = run_case(&case, MiterStrategy::Universal) else {
+        return Err(UnexpectedResult);
+    };
+    if result.status != MiterStatus::Ok {
+        return Err(UnexpectedResult);
+    }
+    if result.diagnostics.max_abs_rail_residual > 1.0e-9 {
+        return Err(UnexpectedResult);
     }
     Ok(())
 }

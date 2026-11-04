@@ -1,5 +1,7 @@
 //! The miter curve and its material coordinate.
 
+use crate::rail_solver::{PieceSegment, RailSolution};
+
 /// One point of the miter curve.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct MiterSample {
@@ -7,6 +9,10 @@ pub struct MiterSample {
     pub alpha: f64,
     /// The point `X(alpha)` in the path plane.
     pub point: [f64; 2],
+    /// Which segment of the first piece produced the point.
+    pub segment_a: PieceSegment,
+    /// Which segment of the second piece produced the point.
+    pub segment_b: PieceSegment,
 }
 
 /// A sampled miter curve in the path plane.
@@ -17,4 +23,21 @@ pub struct MiterSample {
 pub struct MiterCurve {
     /// The samples, sorted by `alpha`.
     pub samples: Vec<MiterSample>,
+}
+
+impl MiterCurve {
+    /// Build the curve from a rail trace.
+    pub fn from_solutions(solutions: &[RailSolution]) -> Self {
+        Self {
+            samples: solutions
+                .iter()
+                .map(|solution| MiterSample {
+                    alpha: solution.alpha,
+                    point: solution.point,
+                    segment_a: solution.segment_a,
+                    segment_b: solution.segment_b,
+                })
+                .collect(),
+        }
+    }
 }

@@ -5,15 +5,23 @@
 //! metrics, separate results. Equal B-rep topology is **not** accepted as proof
 //! of geometric equivalence.
 
-use crate::curve::CurveSpec;
+use core::fmt;
+
+use crate::curve::{CurveSpec, GeometryError};
+use crate::differential_geometry::{sub, unit};
 use crate::miter_curve::MiterCurve;
-use crate::rail_solver::RailStop;
-use crate::validation::MiterDiagnostics;
+use crate::rail_solver::{self, Piece, RailStop};
+use crate::validation::{self, MiterDiagnostics};
+
+const SQRT_2: f64 = std::f64::consts::SQRT_2;
 
 /// Which construction a case runs.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MiterStrategy {
     /// The production `CreateSweepAlongPlanarPath` / `ProjectAndTrim` path.
+    ///
+    /// It is intentionally not implemented at level A: it shares the production
+    /// algorithm and is added at level B, on the real B-rep.
     Original,
     /// The universal rail-based miter under study.
     Universal,
@@ -42,7 +50,7 @@ pub enum ExpectedGeometry {
         /// A direction along the line.
         direction: [f64; 2],
     },
-    /// The line-circle bisector: `|X - focus| = radius - d_line` (a parabola).
+    /// A line-circle bisector: `|X - focus| = radius - d_line` (a parabola).
     Parabola {
         /// The circle centre (focus of the parabola).
         focus: [f64; 2],
@@ -53,8 +61,20 @@ pub enum ExpectedGeometry {
         /// The circle radius in the signed-distance equation.
         radius: f64,
     },
-    /// A sample set produced by an independent solver (rail root or brute
-    /// force), for cases without a closed form.
+    /// Two circle arcs with the inside signed distance: `r1 - |X - c1| =
+    /// r2 - |X - c2|` (a quartic / Cartesian oval).
+    CirclePair {
+        /// First circle centre.
+        c1: [f64; 2],
+        /// First circle radius.
+        r1: f64,
+        /// Second circle centre.
+        c2: [f64; 2],
+        /// Second circle radius.
+        r2: f64,
+    },
+    /// A sample set produced by an independent solver, for cases without a
+    /// closed form.
     Samples(Vec<[f64; 2]>),
 }
 
@@ -93,6 +113,10 @@ pub enum MiterRefusal {
     CurvatureCusp,
     /// The seam left the extended piece.
     OutsidePiece,
+    /// The two pieces are tangent at the corner; no miter exists.
+    TangentJoin,
+    /// The Newton iteration did not converge away from a known singularity.
+    NoConvergence,
     /// The path is not planar.
     NonPlanarPath,
     /// The path plane normal is undefined.
@@ -121,43 +145,90 @@ pub enum MiterError {
     NotImplemented,
     /// The case is malformed (a doc-level condition, not an input curve).
     InvalidCase(&'static str),
+    /// A curve or a piece is malformed.
+    Geometry(GeometryError),
 }
 
-impl core::fmt::Display for MiterError {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+impl fmt::Display for MiterError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::NotImplemented => f.write_str("the universal miter solver is not implemented"),
             Self::InvalidCase(reason) => f.write_str(reason),
+            Self::Geometry(error) => write!(f, "{error}"),
         }
     }
 }
 
 impl std::error::Error for MiterError {}
 
+impl From<GeometryError> for MiterError {
+    fn from(value: GeometryError) -> Self {
+        Self::Geometry(value)
+    }
+}
+
 /// Run one case with one strategy.
 ///
-/// The infrastructure task only fixes the interface; the solver itself is the
-/// next stage. Both strategies therefore return
-/// [`MiterError::NotImplemented`].
+/// `Universal` runs the level A rail solver. `Original` reproduces the
+/// production plane cut only at level B; at level A it returns
+/// [`MiterError::NotImplemented`] rather than pretending to be independent.
 ///
 /// # Errors
 ///
-/// Always [`MiterError::NotImplemented`] in this stage.
-pub fn run_case(
-    _case: &MiterTestCase,
-    _strategy: MiterStrategy,
-) -> Result<MiterResult, MiterError> {
-    Err(MiterError::NotImplemented)
+/// [`MiterError`] for an unparseable case, malformed curve data or a corner
+/// where the pieces do not meet.
+pub fn run_case(case: &MiterTestCase, strategy: MiterStrategy) -> Result<MiterResult, MiterError> {
+    match strategy {
+        MiterStrategy::Original => Err(MiterError::NotImplemented),
+        MiterStrategy::Universal => run_universal(case),
+    }
 }
 
-/// The binding stop as a harness refusal, if the trace stopped at a limit.
-#[must_use]
-pub fn refusal_of(stop: RailStop) -> Option<MiterRefusal> {
+fn run_universal(case: &MiterTestCase) -> Result<MiterResult, MiterError> {
+    if !case.profile.alpha[0].is_finite()
+        || !case.profile.alpha[1].is_finite()
+        || !case.profile.beta[0].is_finite()
+        || !case.profile.beta[1].is_finite()
+    {
+        return Err(MiterError::InvalidCase("non-finite profile interval"));
+    }
+    let alpha_span = (case.profile.alpha[1] - case.profile.alpha[0]).abs();
+    let beta_span = (case.profile.beta[1] - case.profile.beta[0]).abs();
+    let max_dimension = alpha_span.max(beta_span).max(1.0e-12);
+    let extension = 2.0 * SQRT_2 * max_dimension;
+    let p1 = Piece::new(case.curve_a.clone(), 0.0, extension).map_err(MiterError::Geometry)?;
+    let p2 = Piece::new(case.curve_b.clone(), extension, 0.0).map_err(MiterError::Geometry)?;
+    let alpha_min = case.profile.alpha[0].min(0.0);
+    let alpha_max = case.profile.alpha[1].max(0.0);
+    let trace = rail_solver::trace(&p1, &p2, alpha_min, alpha_max).map_err(MiterError::Geometry)?;
+    let (start_a, _) = p1
+        .differential(p1.corner_end())
+        .map_err(MiterError::Geometry)?;
+    let (start_b, _) = p2
+        .differential(p2.corner_start())
+        .map_err(MiterError::Geometry)?;
+    let current_line =
+        unit(sub(start_b.tangent, start_a.tangent)).map(|direction| (start_a.point, direction));
+    let diagnostics =
+        validation::validate_trace(&p1, &p2, &trace, current_line).map_err(MiterError::Geometry)?;
+    let refusal =
+        refusal_from_stop(trace.negative_stop).or_else(|| refusal_from_stop(trace.positive_stop));
+    let status = refusal.map_or(MiterStatus::Ok, MiterStatus::Refused);
+    Ok(MiterResult {
+        strategy: MiterStrategy::Universal,
+        status,
+        curve: Some(MiterCurve::from_solutions(&trace.points)),
+        diagnostics,
+    })
+}
+
+fn refusal_from_stop(stop: Option<RailStop>) -> Option<MiterRefusal> {
     match stop {
-        RailStop::Fold => Some(MiterRefusal::Fold),
-        RailStop::CurvatureCusp => Some(MiterRefusal::CurvatureCusp),
-        RailStop::OutsidePiece => Some(MiterRefusal::OutsidePiece),
-        RailStop::NonPlanarPath => Some(MiterRefusal::NonPlanarPath),
-        RailStop::ReachedAlphaBound => None,
+        None | Some(RailStop::ReachedAlphaBound) => None,
+        Some(RailStop::Fold) => Some(MiterRefusal::Fold),
+        Some(RailStop::CurvatureCusp) => Some(MiterRefusal::CurvatureCusp),
+        Some(RailStop::OutsidePiece) => Some(MiterRefusal::OutsidePiece),
+        Some(RailStop::TangentJoin) => Some(MiterRefusal::TangentJoin),
+        Some(RailStop::NoConvergence) => Some(MiterRefusal::NoConvergence),
     }
 }

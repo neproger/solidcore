@@ -102,6 +102,27 @@ Serde support is added with the runner; the format is fixed now so fixtures can
 be written independently. Fixtures live under `fixtures/<family>/` and are loaded
 by both the Rust prototype and, where applicable, the Python validator.
 
+## Level A implemented tests
+
+`prototype/tests/matrix.rs` implements the matrix above (20 tests, including
+the audit regressions):
+
+- the ten pairs at `alpha in [-0.2, 0.2]`;
+- the analytic `Line–Line`, `Line–Circle` (parabola) and `Circle–Circle`
+  (signed-distance quartic), plus the asymmetric circle pair;
+- a reflex turn;
+- subdivision at `u = 0.5`, affine reparameterisation and exact B-spline
+  representation at a common alpha grid;
+- reversed curves and scales `1e-3`/`1e3`;
+- the G1 extension segments (original vs start/end extension);
+- the line–arc and arc–arc folds with the negative branch continuing;
+- an out-of-piece seam (`OutsidePiece`);
+- the curvature-cusp/fold/non-convergence classifier (unit test);
+- the audit regressions: closest-point independence, repeated-run determinism,
+  the fold approach from both sides, and relative-residual assertions.
+
+The Gate 1 numbers and the PASS verdict are in `06-experiment-results.md`.
+
 ## Baseline
 
 `results/reports/initial-validation.txt` is the immutable first run of the

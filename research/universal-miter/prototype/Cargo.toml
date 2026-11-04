@@ -17,5 +17,15 @@ solidcore = ["dep:solidcore"]
 [dependencies]
 solidcore = { path = "../../../crates/solidcore", optional = true }
 
+[[test]]
+name = "gate0"
+path = "tests/gate0.rs"
+required-features = ["solidcore"]
+
+[[test]]
+name = "level_b_geometry"
+path = "tests/level_b_geometry.rs"
+required-features = ["solidcore"]
+
 [lints]
 workspace = true

@@ -1,8 +1,9 @@
 # Universal miter — research module
 
-An isolated laboratory for the universal planar-sweep miter curve. The research
-target is the kernel geometry, so it lives **inside SolidCore**, but it is not
-part of the production build and it does not change the production Sweep.
+An isolated laboratory for the Planar Sweep miter and the alternative
+`create_sweep_along_planar_path2`. The research target is the kernel geometry,
+so it lives **inside SolidCore**, but it is not part of the production build and
+it does not change the production Planar Sweep.
 
 Production code (`crates/solidcore/.../p2/planar_path.rs`) and the public API
 are untouched. The production build is unrelated to this directory.
@@ -11,11 +12,33 @@ are untouched. The production build is unrelated to this directory.
 
 - **Stage 1–3 research:** the existing construction, the mathematical model and
   the independent validation are in `docs/` and `results/`.
-- **This stage:** the isolated infrastructure only. The Rust prototype is a
-  compiling skeleton; `harness::run_case` returns `NotImplemented` for both
-  strategies. The algorithm is the next stage.
-- The Python validator is the independent mathematical reference and already
-  produces the baseline in `results/reports/initial-validation.txt`.
+- **Level A implemented; Gate 1 PASS; audit PASS.** The Rust rail solver
+  implements the differential geometry, the G1 offset rails, the damped
+  fixed-alpha Newton, the two-direction continuation, the fold/cusp/domain
+  refusals and the independent signed-distance validation. 22 tests pass; the
+  Gate 1 evidence is in `docs/06-experiment-results.md`,
+  `results/reports/v1-gate1-rust.txt` and
+  `results/reports/v1a-gate1-audit-rust.txt`; the audit is
+  `docs/08-level-a-audit.md`.
+- **Gate 0 preprocessing parity PASS.** The normalizer in
+  `prototype/src/planar_sweep2.rs` reproduces the production Planar Sweep
+  preparation; 9 tests pass. The production cap matches the whole-path
+  normalizer; the single-segment WR-660 wrapper differs; rational weights,
+  planarity, caps and extension are covered. See
+  `docs/11-gate0-preprocessing.md` and
+  `results/reports/v0-gate0-preprocessing.txt`. The private
+  `prepare_curve_sweep` is reproduced as `PreparedPiece`.
+- **Planar Sweep2 surfaces are not started.** After Gate 0 approval the
+  alternative builds its own swept surfaces, joints and B-rep.
+  `Original` is the existing `create_sweep_along_planar_path`. The general
+  `create_curve_sweep` and spatial paths are out of scope. The exact contract,
+  architecture and open decisions are `docs/09-sweep2-scope.md`; the input
+  normalization audit is `docs/10-preprocessing-audit.md`; approval is pending.
+- The `MiterStrategy::Original` of the Level A joint harness deliberately remains
+  `NotImplemented`; the operation-level `Original` is the existing Planar Sweep
+  in the Planar Sweep2 comparison.
+- The Python validator remains the independent mathematical reference and its
+  baseline is `results/reports/initial-validation.txt`.
 
 ## Layout
 
@@ -31,7 +54,11 @@ research/universal-miter/
 │   ├── 04-solver-design.md
 │   ├── 05-test-matrix.md
 │   ├── 06-experiment-results.md
-│   └── 07-integration-plan.md
+│   ├── 07-integration-plan.md
+│   ├── 08-level-a-audit.md
+│   ├── 09-sweep2-scope.md
+│   ├── 10-preprocessing-audit.md
+│   └── 11-gate0-preprocessing.md
 ├── prototype/                Rust level A (math) + level B (feature `solidcore`)
 │   ├── Cargo.toml
 │   ├── src/
@@ -42,8 +69,12 @@ research/universal-miter/
 │   │   ├── miter_curve.rs
 │   │   ├── validation.rs
 │   │   ├── harness.rs
+│   │   ├── planar_sweep2.rs  only with `--features solidcore`
 │   │   └── solidcore_api.rs  only with `--features solidcore`
-│   └── tests/smoke.rs
+│   └── tests/
+│       ├── smoke.rs
+│       ├── matrix.rs
+│       └── gate0.rs          only with `--features solidcore`
 ├── prototype-python/
 │   ├── miter_validator.py    independent mathematical validator
 │   └── run_report.py         versioned report wrapper (does not edit the validator)
@@ -68,6 +99,8 @@ python research/universal-miter/prototype-python/run_report.py \
 # Rust level A (no kernel dependency)
 cargo build --manifest-path research/universal-miter/prototype/Cargo.toml
 cargo test  --manifest-path research/universal-miter/prototype/Cargo.toml
+cargo test  --manifest-path research/universal-miter/prototype/Cargo.toml \
+  --test matrix gate1_report -- --nocapture
 
 # Rust level B (uses the real kernel; never part of the production build)
 cargo check --manifest-path research/universal-miter/prototype/Cargo.toml --features solidcore

@@ -1,8 +1,11 @@
 # 04 — Solver design
 
-This is the design of the solver to be implemented in the next stage. The
-current prototype only fixes the interface; `harness::run_case` returns
-`NotImplemented`.
+**Status: level A is implemented and passes Gate 1.** `MiterStrategy::Universal`
+runs the rail solver. The Level A solver is the **joint component** of the
+alternative **Planar Sweep** (`create_sweep_along_planar_path2`), not a
+replacement for the general `create_curve_sweep`. `MiterStrategy::Original` is
+the joint-level harness's placeholder; the operation-level `Original` is the
+existing `create_sweep_along_planar_path` in the comparison (`09-sweep2-scope.md`).
 
 ## Two levels
 
@@ -17,11 +20,13 @@ current prototype only fixes the interface; `harness::run_case` returns
 - `validation`: residuals and invariance report.
 - `harness`: the same case through both strategies.
 
-**Level B — SolidCore geometry prototype** (`solidcore_api`, feature
-`solidcore`): converts `CurveSpec` to the real `Curve`/`BSplineCurve`, builds
-the test sweep surfaces, runs the seam, applies `ProjectAndTrim`, and checks
-closure, manifold and volume. It is off by default and never part of the
-production build.
+**Level B — Planar Sweep2 prototype** (`solidcore_api`, feature `solidcore`):
+the kernel-curve adapter and the independent Planar Sweep construction
+(`create_sweep_along_planar_path2`). It converts the real curves through the
+`PlanarCurve` adapter, builds Sweep2's own swept surfaces and joints, applies
+the kernel trim/topology tools, and checks closure, manifold and volume. It is
+off by default and never part of the production build. The scope and contract
+are in `09-sweep2-scope.md`.
 
 ## Geometry
 
@@ -106,6 +111,51 @@ point. The trace reports the first stop, the minimum `|det J|`, the Newton
 iteration count and the number of samples. Level B adds closure, manifold,
 volume, B-rep counts and time.
 
+## Implementation (level A)
+
+Modules and their responsibilities:
+
+- `curve`: the common differential interface (`CurveSpec::differential`) for
+  line, circular arc, quadratic/cubic Bezier and clamped B-spline. The B-spline
+  derivative curves are built from the derivative control points; de Boor is
+  iterative and bounds-checked. No miter code branches on the variant.
+- `differential_geometry`: point, first/second derivative, tangent, left normal,
+  signed curvature and speed; the 2D helpers.
+- `rail_solver`: `Piece` (original curve plus straight G1 tangent extension), the
+  damped fixed-alpha Newton, the two-direction continuation and the explicit
+  stops; `solve_sequence` for uniform-grid invariance tests.
+- `miter_curve`: the sampled seam, with the segment (original/start/end
+  extension) for each piece.
+- `validation`: the independent closest-point signed distances, the analytic
+  residuals and the diagnostics.
+- `harness`: `MiterStrategy`, `MiterTestCase`, `MiterResult`; `Universal` is
+  implemented, `Original` is level B.
+
+Implementation details:
+
+- A piece parameter `s` maps affinely to the curve parameter; the extensions are
+  the production policy: straight `SM_CT_G1`, `extension = 2 * sqrt(2) *
+  max(profile alpha span, profile beta span)`.
+- Newton tolerance `1e-13 * max(1, |corner|, |alpha|)`, determinant floor
+  `1e-14 * scale^2`, damped line search with 24 halvings, at most 60 iterations.
+- The continuation starts at `alpha = 0` with `v = end(P1)`, `w = start(P2)`,
+  predicts with the ODE and corrects with the Newton. It traces negative and
+  positive directions independently; a stop on one side does not abort the
+  other.
+- Stops: `Fold` (tangent cross below `1e-4`), `CurvatureCusp` (`|1 - alpha
+  kappa|` below `1e-6`), `OutsidePiece`, `TangentJoin`, `ReachedAlphaBound`,
+  `NoConvergence`. On a failed step the continuation halves the step down to
+  `1e-10`; then it classifies the last successful state. No straight-line
+  fallback exists.
+- The `Fold` detection is also checked at every successful point; the two
+  curvature factors are checked separately so a cusp is never reported as a
+  fold. In the tested corner geometries the fold binds first; the cusp branch is
+  covered by the `stop_classifier_distinguishes_cusp_fold_and_non_convergence`
+  unit test.
+- The independent check in `validation` uses a 256-sample closest-point search,
+  golden-section refinement and Newton polishing, then the signed distance from
+  the tangent at the closest point. It never uses the rail Jacobian.
+
 ## Interface
 
 `harness.rs` fixes the shared types:
@@ -130,4 +180,6 @@ pub struct MiterResult {
 ```
 
 The **same** case is run through both strategies. Topology is reported but not
-used as proof of equivalence. The current stage only wires the interface.
+used as proof of equivalence. Level A implements `Universal`; `Original` stays
+`NotImplemented` until level B can run the production construction on the real
+B-rep. The Gate 1 evidence is in `06-experiment-results.md`.

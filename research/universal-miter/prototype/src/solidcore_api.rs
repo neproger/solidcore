@@ -1,4 +1,4 @@
-//! Level B: the integration prototype on the real SolidCore types.
+//! Level B: the integration prototype on the real `SolidCore` types.
 //!
 //! Enabled only with `--features solidcore`; the production build never turns
 //! it on. This module is a wiring placeholder: it proves that the isolated

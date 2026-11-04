@@ -28,4 +28,8 @@ pub mod rail_solver;
 pub mod validation;
 
 #[cfg(feature = "solidcore")]
+pub mod level_b_geometry;
+#[cfg(feature = "solidcore")]
+pub mod planar_sweep2;
+#[cfg(feature = "solidcore")]
 pub mod solidcore_api;

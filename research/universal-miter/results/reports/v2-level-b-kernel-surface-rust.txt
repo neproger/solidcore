@@ -1,0 +1,114 @@
+# Universal miter - Rust Level B sub-slice: KernelCurve + Surface Builder
+version: v2
+label: level-b-kernel-surface
+head: 9ad261af6 (research changes uncommitted)
+command: cargo test --manifest-path prototype/Cargo.toml --features solidcore --test level_b_geometry -- --nocapture
+workspace: research/universal-miter (separate workspace; production untouched)
+
+ARCHITECTURE
+
+KernelCurve<'a>
+- Adapts solidcore::curve::curve::Curve to the Level A PlanarCurve trait.
+- Natural parameter is preserved; all evaluations go through
+  Curve::evaluate(k, u, 2, true, false), so rational weights are kept.
+- The 3D point and derivatives are projected onto the local path-plane axes
+  (origin, x_axis, y_axis). normal = rot90(tangent);
+  curvature = cross(first, second) / speed^3; speed <= 1e-15 is ZeroSpeed.
+
+AnalyticSweep
+- S(v, u) = P(v) + alpha(u) * n(v) + beta(u) * plane_normal,
+  n(v) = plane_normal x tangent(v).
+- section(v) is the input profile moved by
+  Axis2Placement::from_to(start_frame, current_frame).
+- The profile must lie in the start normal plane (normal, plane_normal). A
+  profile with a component along the start tangent is outside this construction.
+
+build_swept_surface
+- Adaptive cross sections; BSplineSurface::create_skinned_surface with
+  cross_section_surf_param = U and the requested loft degree.
+- Two-sided geometric deviation: analytic -> NURBS via Surface::drop_point
+  (NoObject), NURBS -> analytic via an independent sampled/golden
+  closest-point search. This checks points between the fit sections, not only
+  same-parameter points.
+- The result's U is the sweep direction and V is the profile; cross sections
+  are constant-U curves.
+- A tolerance not reached within the section/refinement budget is refused as
+  SurfaceBuildError::ToleranceNotReached. No fallback.
+
+TEST RESULTS
+
+cargo test --features solidcore (whole prototype):
+- lib unit tests: 1 passed
+- gate0: 9 passed
+- level_b_geometry: 15 passed
+- matrix: 20 passed
+- smoke: 1 passed
+Total 46 passed, 0 failed.
+
+cargo test (default feature off): 1 + 20 + 1 = 22 passed.
+cargo clippy --features solidcore --all-targets -D warnings: clean.
+cargo fmt --check: clean.
+
+KernelCurve (all pass)
+- line vs CurveSpec: point/tangent/curvature agree.
+- cubic B-spline vs CurveSpec built from control_points/knots/degree: agree.
+- circle: radius 3, |curvature| = 1/3 throughout, sign is consistent.
+- ellipse: curvature sign kept.
+- parabola and hyperbola: finite speed/curvature at an interior parameter.
+- Level A line-circle seam: real KernelCurve pieces vs CurveSpec pieces agree
+  within 1e-7 at alpha = -0.2, -0.1, 0.1, 0.2 (both pieces use 0.5 tangent
+  extension; with zero extension alpha = -0.1 correctly has no solution).
+- reversed curve vs reversed CurveSpec: agree.
+- affine reparameterisation (2..5) and 10x scaling: agree.
+
+Surface Builder max deviation per fixture
+- straight path (tol 1e-7): 2.116e-15, 2 sections, 0 refinements.
+- cubic Bezier path (tol 1e-3): 5.222e-4, 17 sections, 4 refinements.
+- rational quadratic circle (create_circle) (tol 1e-3): 1.306e-4, 17 sections, 4 refinements.
+- circle path R=1 (tol 1e-3): 5.596e-5, 17 sections, 4 refinements.
+- ellipse path r1=2, r2=0.7 (tol 1e-3): 4.789e-4, 129 sections, 7 refinements.
+- scale R=1e-3 (tol 1e-4): 1.858e-5, 17 sections, 4 refinements.
+- scale R=1e3 (tol 1e-1): 7.460e-2, 17 sections, 4 refinements.
+- boundary: constant-U iso at u_min vs the start profile: 0.000e0.
+- determinism: two builds give the same sections, refinements and deviation
+  within 1e-15.
+- unreachable tolerance 1e-15 with max_refinements = 0: refused with
+  ToleranceNotReached.
+
+INDEPENDENCE FROM THE OLD SWEEP
+
+grep over prototype/src and prototype/tests finds no call from the new module
+or its tests to create_sweep_along_planar_path, create_curve_sweep,
+create_sweep_surface or N_CreateSweepScale. The only remaining references are
+the Gate 0 reference wrapper (tests/gate0.rs) and its doc in solidcore_api.rs.
+New code uses only Curve::evaluate, BSplineSurface::create_skinned_surface,
+Surface::drop_point / evaluate_point / natural_uv_domain_with_nurb,
+Axis2Placement::from_to and curve transform.
+
+CHANGED FILES
+
+- research/universal-miter/prototype/src/level_b_geometry.rs (new; the module
+  compiled before this sub-slice, its tests did not exist)
+- research/universal-miter/prototype/tests/level_b_geometry.rs (new)
+- research/universal-miter/prototype/Cargo.toml (level_b_geometry test target,
+  required-features = ["solidcore"])
+- research/universal-miter/results/reports/v2-level-b-kernel-surface-rust.txt
+
+No production file, public API, Python validator, the immutable baseline
+initial-validation.txt or the Level A algorithm was changed.
+
+LIMITATIONS
+
+- Only the controlled NURBS surface is built. No seam/joint, ProjectAndTrim,
+  caps, stitching, booleans or B-rep.
+- The profile must be in the start normal plane.
+- Deviation is sampled, not a continuous bound; a refusal at the tolerance or
+  section budget is the documented outcome.
+- Surface U is the sweep direction and V the profile (constant-U cross
+  sections). This orientation is a property of cross_section_surf_param = U and
+  must be kept when the surface is consumed.
+- The Level A line-circle seam comparison needs tangent extensions; this is a
+  property of the miter, not of the adapter.
+
+NEXT (not started)
+- Seam/joint construction, ProjectAndTrim, caps, stitching and B-rep.
