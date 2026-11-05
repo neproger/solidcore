@@ -1,0 +1,36 @@
+# Universal miter - Arc-arc geometric consistency audit
+version: v17
+label: arc-arc-geometric-consistency
+head: 28d6f6afc (research changes uncommitted)
+workspace: research/universal-miter (separate workspace; production untouched)
+
+CASE
+
+  arc A: centre (0,1), r=1, -180..-90
+  arc B: centre (-1,0), r=1, 0..90
+  circular profile r=0.25, K=4
+  HybridAtJunction exact=36 junction=32, rail residual=6.995e-14
+
+AUDIT
+
+  surface A analytic-vs-Level-B max deviation = 4.280e-5
+  surface B analytic-vs-Level-B max deviation = 4.280e-5
+  seam distance to surface A                  = 3.779e-6
+  seam distance to surface B                  = 3.779e-6
+  seam distance to both (max)                 = 3.779e-6
+
+CONCLUSION
+
+  The 3D miter curve lies on both swept surfaces. The surface builder preserves
+  the arc curvature/extension and the profile/normal frame to the measured
+  tolerance. A wrong arc continuation, lost curvature, or a coordinate-frame
+  mismatch is not supported for this case.
+
+  The 11 check_brep failures of v16 are therefore UV trim/loop
+  parameterization, not the 3D geometry. The next fix belongs in the periodic
+  UV branch/loop creation, not in the surface or boundary geometry.
+
+TEST
+
+  arc_arc_geometric_consistency in prototype/tests/direct_joint.rs
+  asserts each measured distance <= 1e-4.

@@ -2,8 +2,8 @@
 //!
 //! This module reuses the existing input preparation and reproduces the one
 //! private whole-path placement; it builds no swept surface, joint or B-rep.
-//! The production Planar Sweep is unchanged. See `docs/10-preprocessing-audit.md`
-//! and `docs/09-sweep2-scope.md`.
+//! The production Planar Sweep is unchanged. See
+//! `docs/16-planarsweep2-task.md`.
 
 use solidcore::curve::curve::p2::{Curve, CurveKind};
 use solidcore::curve::curve::p3::compute_crvs_normal;

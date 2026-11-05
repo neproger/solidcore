@@ -1,0 +1,64 @@
+# Universal miter - N-segment direct B-rep builder
+version: v15
+label: n-segment-direct-builder
+head: 28d6f6afc (research changes uncommitted)
+command: cargo test --manifest-path prototype/Cargo.toml --features solidcore -- --nocapture
+workspace: research/universal-miter (separate workspace; production untouched)
+
+ARCHITECTURE
+
+  build_direct_chain(kernel, side_surfaces[N], boundaries[N-1],
+                     path_start, start_tangent, path_end, end_tangent, K)
+  - accepts solved surfaces and joint boundaries only; no boundary strategy
+    knowledge
+  - N=1 delegates to build_direct_single
+  - build_direct_joint is the N=2 wrapper around build_direct_chain
+
+TOPOLOGY (N pieces, K profile segments)
+
+  faces    = N*K + 2
+  edges    = (2*N + 1)*K
+  vertices = (N + 1)*K
+  each edge has 4 edge-uses; V - E + F = 2 per shell
+  one shared vertex set and one shared edge set per joint; no duplicate joint
+  faces.
+
+N=3 TEST: line-line-line
+
+  path: (0,0)->(1,0)->(1,1)->(2,1), circular profile r=0.25, K=4
+  both joints: ExactMiter
+
+  faces=14 edges=28 vertices=16
+  regions=2 shells=2
+  check_brep: 0 failures, assert=true
+  integrity: pass
+  manifold=true outward=true
+  volume=5.890492241e-1
+  analytic=5.890486225e-1
+  relative=1.021e-6
+
+2-SEGMENT COMPATIBILITY
+
+  line-line:        faces=10 edges=20 vertices=12 volume relative=8.437e-7
+  line-arc exact:   faces=10 edges=20 vertices=12 volume relative=6.117e-6
+  line-arc hybrid:  faces=10 edges=20 vertices=12 boundary/topology PASS
+
+FINDINGS
+
+  1. The cap profile loop closes at v_max, not at the first seam V=0. Using
+     V=0 for the closing edge produced loop gaps at profile boundary K-1 -> 0.
+  2. Each intermediate surface is checked for the same profile V at both
+     adjacent joints; a mismatch is a typed refusal.
+  3. Joint vertices/edges are created once and shared by both adjacent side
+     faces.
+  4. The builder is strategy-independent; the 2-segment exact and hybrid tests
+     reach it through the wrapper.
+
+FULL SUITE
+
+  lib 1; direct_joint 5; direct_shell 2; gate0 9; matrix 20; smoke 1;
+  38 tests passed, 0 failed. fmt --check and clippy -D warnings clean.
+
+NEXT
+
+  Arc-arc and mixed line-arc-line through the same chain; then AdaptiveCut.

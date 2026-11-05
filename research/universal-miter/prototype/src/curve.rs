@@ -2,7 +2,7 @@
 //!
 //! Deliberately independent of `solidcore::curve::Curve`: level A must be
 //! testable without the kernel. Level B converts these specs to the real types
-//! in [`crate::solidcore_api`] (feature `solidcore`).
+//! in [`crate::level_b_geometry`] (feature `solidcore`).
 //!
 //! All variants expose the same differential interface:
 //! [`CurveSpec::natural_interval`] and [`CurveSpec::differential`]. The miter

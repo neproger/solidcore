@@ -1,0 +1,51 @@
+# Universal miter - Arc-arc matrix: boundary PASS, direct B-rep blocked
+version: v16
+label: arc-arc-matrix-blocked
+head: 28d6f6afc (research changes uncommitted)
+workspace: research/universal-miter (separate workspace; production untouched)
+
+BOUNDARY MATRIX
+
+  pair: center (0,1) r=1 -180..-90; center (-1,0) r=1 0..90
+  profile r=0.25, K=4
+  strategy=HybridAtJunction exact=36 junction=32
+  first_junction_alpha=-0.02246360947442627
+  max rail residual=6.995e-14
+  ExactMiter -> typed UncoveredProfile refusal
+
+  PASS: the existing strategy pipeline handles the arc-arc boundary.
+
+DIRECT B-REP
+
+  build_direct_chain accepted the surfaces/boundaries and built topology, but
+  check_brep reports 11 failures:
+
+    UVEdge/UVEdge Gap (V): 0.7499832976013534 > 0.1
+    Edge tolerance relative to brep tolerance: 1.4142135623730947
+    Vertex tolerance relative to brep tolerance: 1.4142135623730947
+    associated bad-edge pointer checks
+
+  Seam drops on both side surfaces:
+
+    side a V = [0.9999832976, 0.25, 0.5000167024, 0.75]
+    side b V = [0.9999832976, 0.25, 0.5000167024, 0.75]
+
+  line-line and line-arc use V = [0, 0.25, 0.5, 0.75]. The arc-arc first
+  profile boundary is on the other branch of the periodic profile V. The direct
+  builder's seam/cap/rail trims then mix V=0 and V=1 representatives.
+
+  A trial canonicalization of the seam V near v_max to v_min did not fix the
+  face-loop UV trims. A second trial with explicit seam UV trim curves and
+  calculate_trims=true also left the same 11 failures.
+
+FULL SUITE
+
+  lib 1; direct_joint 6; direct_shell 2; gate0 9; matrix 20; smoke 1;
+  39 tests passed, 0 failed. fmt --check and clippy -D warnings clean.
+
+STATUS
+
+  N-segment line-line-line chain: PASS.
+  Arc-arc boundary + typed refusal: PASS.
+  Arc-arc direct B-rep: BLOCKED on periodic profile V seam trim.
+  AdaptiveCut: blocked until this is fixed.

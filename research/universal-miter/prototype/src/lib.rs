@@ -1,23 +1,27 @@
-//! Isolated research prototype for the universal planar-sweep miter curve.
+//! Isolated `PlanarSweep2` research prototype.
 //!
-//! This crate is **outside the `SolidCore` workspace** (it has its own
-//! `Cargo.toml` at `research/universal-miter/`), so the production build never
-//! sees it. It has two independent levels:
+//! This crate is outside the `SolidCore` workspace, so the production build
+//! never sees it. The main task specification is
+//! `../docs/16-planarsweep2-task.md`: `PlanarSweep2` analyses the flat path,
+//! constructs a valid boundary between adjacent segments, and builds the B-rep
+//! directly from those boundaries without Boolean, `ProjectAndTrim` or
+//! `StitchFaces` forming the joints.
 //!
-//! - **level A** (always built): the mathematical prototype. It defines the
-//!   curve data, the differential data, the rail system and the comparison
-//!   harness without importing anything from the kernel. The algorithm is not
-//!   implemented yet; `harness::run_case` returns
-//!   [`MiterError::NotImplemented`](crate::harness::MiterError::NotImplemented).
-//! - **level B** (`--features solidcore`): the integration prototype. It uses
-//!   the real [`solidcore`] types; the module is `solidcore_api`.
+//! Foundations kept from the earlier research:
 //!
-//! The independent Python validator in `prototype-python/` is the mathematical
-//! reference and is not replaced by this crate.
+//! - **Level A** (always built): the planar curve/differential/rail mathematics.
+//! - **Gate 0 input preprocessing** (`planar_sweep2`, feature `solidcore`):
+//!   path/profile normalization and unification, reproduced from the production
+//!   Planar Sweep where its helpers are private.
+//! - **Level B surface builder** (`level_b_geometry`, feature `solidcore`):
+//!   controlled NURBS swept surfaces with two-sided deviation checks.
 //!
-//! Rules for this sandbox are in `../AGENTS.md`. The production Sweep
-//! (`crates/solidcore/src/primitive/primitive_creation/p2/planar_path.rs`) and
-//! the public API are not touched.
+//! The independent Python validator and its immutable baseline in
+//! `../prototype-python/` and `../results/reports/initial-validation.txt` are
+//! preserved as the original mathematical reference.
+//!
+//! Rules for this sandbox are in `../AGENTS.md`. Production files and the public
+//! API are not touched.
 #![forbid(unsafe_code)]
 
 pub mod curve;
@@ -28,8 +32,10 @@ pub mod rail_solver;
 pub mod validation;
 
 #[cfg(feature = "solidcore")]
+pub mod boundary;
+#[cfg(feature = "solidcore")]
+pub mod direct_brep;
+#[cfg(feature = "solidcore")]
 pub mod level_b_geometry;
 #[cfg(feature = "solidcore")]
 pub mod planar_sweep2;
-#[cfg(feature = "solidcore")]
-pub mod solidcore_api;

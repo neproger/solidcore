@@ -1,0 +1,101 @@
+# Universal miter - Milestone 2: universal boundary, exact and hybrid-at-junction
+version: v13
+label: universal-boundary-hybrid
+head: 28d6f6afc (research changes uncommitted)
+command: cargo test --manifest-path prototype/Cargo.toml --features solidcore -- --nocapture
+workspace: research/universal-miter (separate workspace; production untouched)
+
+ARCHITECTURE
+
+Boundary solver  prototype/src/boundary.rs
+  BoundaryStrategy trait + BoundarySolver
+  ExactMiter            exact common boundary on both original offsets
+  HybridAtJunction      exact where it exists; junction tangent extension on
+                        the missing side; one shared seam on both extended
+                        side surfaces
+  HybridAtLimitTangent  AOIM negative control; typed UncoveredProfile refusal
+  common input: PathFrame/BoundaryInput (position, tangent, normal, curvature,
+                derivatives, valid domain, placed profile, original paths,
+                extension, K, samples per segment)
+  common output: JointBoundary (seam curves, seam vertices, strategy,
+                diagnostics: exact/junction samples, first junction alpha,
+                alpha range, max residual)
+
+Surface builder  prototype/src/level_b_geometry.rs
+  NURBS side surfaces for the extended pieces
+
+B-rep builder    prototype/src/direct_brep.rs
+  build_direct_joint: shared vertices/edges/faces, caps, shell
+  no Boolean / ProjectAndTrim / StitchFaces
+
+CLASSIFICATION
+
+  Piece::is_linear samples the original curvature. A seam on a straight piece's
+  extension is still an exact offset intersection; a seam on a curved piece's
+  extension is the junction tangent continuation.
+  ExactMiter refuses with UncoveredProfile if any sample is in the second
+  category. HybridAtJunction accepts both. HybridAtLimitTangent refuses when a
+  junction is needed.
+
+STRATEGY RESULTS
+
+boundary line-line: strategy=ExactMiter samples=68 segments=4 exact=68 junction=0 first_junction=None max_residual=2.289e-16
+boundary line-arc-exact: strategy=ExactMiter samples=68 segments=4 exact=68 junction=0 first_junction=None max_residual=0.000e0
+boundary line-arc-hybrid: strategy=HybridAtJunction samples=68 segments=4 exact=36 junction=32 first_junction=Some(-0.022463609474426133) max_residual=1.968e-14
+negative control: HybridAtLimitTangent -> UncoveredProfile (typed refusal)
+
+DIRECT JOINT RESULTS (K=4)
+
+validation line-line: pointers=1000 assert=Some(true) failures=0
+line-line: surface_deviation_a=4.657e-15 surface_deviation_b=4.621e-15 boundary_deviation=8.854e-7 faces=10 edges=20 vertices=12 regions=2 shells=2 manifold=true outward=true volume=3.926987504e-1 expected=3.926990817e-1 relative=8.437e-7 reference=Some(0.39269906344823297) reference_relative=Some(7.972163046803157e-7)
+
+validation line-arc-exact: pointers=1000 assert=Some(true) failures=0
+line-arc-exact: surface_deviation_a=1.688e-14 surface_deviation_b=7.480e-5 boundary_deviation=7.136e-8 faces=10 edges=20 vertices=12 regions=2 shells=2 manifold=true outward=true volume=3.037933872e0 expected=3.037915288e0 relative=6.117e-6 reference=None reference_relative=None
+
+validation line-arc-hybrid: pointers=1000 assert=Some(true) failures=0
+line-arc-hybrid: surface_deviation_a=4.657e-15 surface_deviation_b=5.591e-5 boundary_deviation=3.963e-5 faces=10 edges=20 vertices=12 regions=2 shells=2 manifold=true outward=true volume=5.037627012e-1 expected=5.047746784e-1 relative=2.005e-3 reference=None reference_relative=None
+
+FULL SUITE
+
+lib 1 passed; direct_joint 4 passed; direct_shell 2 passed; gate0 9 passed;
+matrix 20 passed; smoke 1 passed; 0 failed. fmt --check and clippy -D warnings
+clean with the solidcore feature.
+
+VOLUME
+
+  line-line exact:     8.437e-7 relative to area x centreline length.
+  line-arc exact:      6.117e-6 relative; all 68 samples on both original
+                       offsets. Supports the analytic reference.
+  line-arc hybrid:     2.005e-3 relative; 32 samples on the junction tangent
+                       extension. This is diagnostic only: HybridAtJunction is a
+                       different joint construction, so its volume differs from
+                       an ordinary sweep by design. See docs/19 (closed).
+  The production line-arc B-rep is non-manifold / effectively zero volume and
+  is not used as a reference.
+
+FINDINGS
+
+  1. The 90-degree line-arc previously labelled ExactMiter was using the arc
+     start extension on its missing side. v13 records it as HybridAtJunction.
+  2. The 150-degree, R=4 line-arc has all 68 samples on both original offset
+     trajectories and is a genuine ExactMiter case.
+  3. HybridAtJunction keeps one shared seam on both extended side surfaces;
+     the direct B-rep topology and validation are identical to the exact case.
+  4. ExactMiter and HybridAtLimitTangent both refuse the hybrid case with a
+     typed UncoveredProfile; no silent fallback.
+  5. Seam V is taken from Surface::drop_point(result_uv.y), not i/K.
+  6. The p6 TestClosureSplitRegion Unported remains after the split; the exact
+     Unported is accepted and the shell is validated independently.
+
+LIMITATIONS
+
+  ExactMiter and HybridAtJunction only. HybridAtLimitBisector and AdaptiveCut
+  are separate next strategies. One joint, two segments, circular profile,
+  K=4. p6 tail and the 1e-9 volume integrator limit remain kernel gaps.
+
+NEXT
+
+  Implement the separate bisector-limit and adaptive-cut constructions behind
+  the same BoundaryStrategy contract; then arc-arc, line-Bezier and
+  spline-spline as test configurations. Keep ExactMiter, HybridAtJunction and
+  the direct B-rep builder unchanged.

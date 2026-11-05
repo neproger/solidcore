@@ -17,22 +17,24 @@ git rules still apply. The rules below add the isolation boundary.
   be used. Level A is independent by design (mathematics); level B uses the
   kernel.
 - Integration into production is a separate, gated step
-  (`docs/07-integration-plan.md`). Do not start it from this sandbox.
+  (`docs/16-planarsweep2-task.md`). Do not start it from this sandbox.
 
 ## Correctness
 
-- A constructed miter curve is **not** evidence that it is correct. Every run
-  must also check at least: the rail residual, both independent signed
-  distances, the analytic reference where one exists, closure where a B-rep is
-  built, and invariance under subdivision and reparameterisation.
-- `d1 - d2 = 0` is valid only under the assumptions in
-  `docs/03-mathematical-model.md` (WR-407 frame, planar path, same material
-  `alpha`). It is **not** equivalent to the raw intersection of two sweep
-  surfaces.
+- A constructed joint boundary is **not** evidence that it is correct. Every
+  run must also check at least: the boundary lies on both adjacent surfaces,
+  both independent signed distances, the analytic reference where one exists,
+  closure where a B-rep is built, and invariance under subdivision and
+  reparameterisation.
+- `d1 - d2 = 0` is valid only under the Level A assumptions (WR-407 frame,
+  planar path, same material `alpha`). It is **not** equivalent to the raw
+  intersection of two sweep surfaces.
 - Equal B-rep topology (face/edge counts) is not proof of geometric
   equivalence.
-- A refusal at a documented limit (rail fold, curvature cusp, seam outside the
-  piece) is a correct outcome. No fallback construction.
+- The AOIM strategy set (exact, tangent/bisector limit, adaptive cut) is
+  selected deterministically from geometry, not by try-then-fallback. A
+  refusal at a documented limit (fold, cusp, uncovered profile, no valid common
+  boundary) is a correct outcome. No silent approximation.
 
 ## Data and reports
 

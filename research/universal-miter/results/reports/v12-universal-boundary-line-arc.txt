@@ -1,0 +1,89 @@
+# Universal miter - Milestone 2: universal boundary construction, line-arc
+# NOTE: superseded by v13. The 90-degree line-arc seam uses the junction
+# tangent extension, so its strategy is HybridAtJunction, not ExactMiter. The
+# numerical results below are unchanged.
+version: v12
+label: universal-boundary-line-arc
+head: 28d6f6afc (research changes uncommitted)
+command: cargo test --manifest-path prototype/Cargo.toml --features solidcore -- --nocapture
+workspace: research/universal-miter (separate workspace; production untouched)
+
+ARCHITECTURE
+
+Boundary solver  prototype/src/boundary.rs
+  BoundaryStrategy trait + BoundarySolver + ExactMiter
+  common input: PathFrame/BoundaryInput (position, tangent, normal, curvature,
+                derivatives, valid domain, placed profile, original paths,
+                extension, K, samples per segment)
+  output: K shared seam curves, K seam vertices, diagnostics
+  no B-rep dependency; no primitive-kind selection
+
+Surface builder  prototype/src/level_b_geometry.rs
+  NURBS side surfaces for the extended pieces
+
+B-rep builder    prototype/src/direct_brep.rs
+  build_direct_joint: shared vertices/edges/faces, caps, shell
+  no Boolean / ProjectAndTrim / StitchFaces
+
+BOUNDARY SOLVER
+
+boundary line-line: strategy=ExactMiter samples=68 segments=4 max_residual=2.289e-16
+boundary line-arc: strategy=ExactMiter samples=68 segments=4 max_residual=1.968e-14
+
+DIRECT JOINT RESULT (K=4)
+
+validation line-line: pointers=1000 assert=Some(true) failures=0
+line-line: surface_deviation_a=4.657e-15 surface_deviation_b=4.621e-15 boundary_deviation=8.854e-7 faces=10 edges=20 vertices=12 regions=2 shells=2 manifold=true outward=true volume=3.926987504e-1 expected=3.926990817e-1 relative=8.437e-7 reference=Some(0.39269906344823297) reference_relative=Some(7.972163046803157e-7)
+
+validation line-arc: pointers=1000 assert=Some(true) failures=0
+line-arc: surface_deviation_a=4.657e-15 surface_deviation_b=5.591e-5 boundary_deviation=3.963e-5 faces=10 edges=20 vertices=12 regions=2 shells=2 manifold=true outward=true volume=5.037627012e-1 expected=5.047746784e-1 relative=2.005e-3 reference=None reference_relative=None
+
+FULL SUITE
+
+lib 1 passed; direct_joint 2 passed; direct_shell 2 passed; gate0 9 passed;
+matrix 20 passed; smoke 1 passed; 0 failed. fmt --check and clippy -D warnings
+clean with the solidcore feature.
+
+VOLUME AND ACCURACY
+
+  line-line: analytic volume = area x centreline length = pi r^2 * 2.
+             brep_volume_default at 1e-4; relative 8.437e-7.
+             production reference 3.926990634e-1; relative 7.972e-7.
+  line-arc:  analytic reference = area x centreline length
+             = pi r^2 * (1 + pi/2) = 5.047746784e-1.
+             direct volume 5.037627012e-1; relative 2.005e-3.
+             The B-rep arc-side surface deviation is 5.591e-5 at builder
+             tolerance 1e-4; the boundary and B-rep topology checks pass
+             independently. The volume is reported against the area x
+             centreline reference, not claimed exact. The test uses a documented
+             1e-2 volume tolerance for this case. The production line-arc B-rep
+             is non-manifold / effectively zero volume and is not used as a
+             reference.
+
+FINDINGS
+
+  1. The boundary solver is universal for the exact strategy: line-line and
+     line-arc run the same ExactMiter code over the differential/offset
+     trajectories. Only the test inputs and the Level B surface tolerance
+     changed.
+  2. Seam V is taken from Surface::drop_point(result_uv.y) on both side
+     surfaces, not from i/K; this is required for edge/loop validation.
+  3. The p6 make_face_topology TestClosureSplitRegion Unported remains after
+     the split; the split completes and the exact Unported is accepted. The
+     shell is validated independently.
+  4. Side faces use OrientType::Opposite (inward Level B normal); caps use
+     outward plane normals and Same.
+  5. Line-arc curved seam and face trims validate, but volume converges only to
+     about 2e-3 relative with the current Level B surface accuracy.
+
+LIMITATIONS
+
+  Exact miter only; hybrid (tangent/bisector limit) and adaptive-cut strategies
+  are not implemented. One joint, two segments, circular profile, K=4. p6 tail
+  and the 1e-9 volume integrator limit remain kernel gaps.
+
+NEXT
+
+  Add HybridAtLimitTangent, HybridAtLimitBisector and AdaptiveCut behind the
+  same BoundaryStrategy interface, selected from offset geometry; then arc-arc,
+  line-Bezier and spline-spline as test configurations of the same pipeline.

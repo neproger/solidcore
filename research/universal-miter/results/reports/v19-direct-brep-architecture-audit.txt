@@ -1,0 +1,55 @@
+# Universal miter - Direct B-rep periodic-face architecture audit
+version: v19
+label: direct-brep-architecture-audit
+head: 28d6f6afc (research changes uncommitted)
+workspace: research/universal-miter (separate workspace; production untouched)
+
+FINDING
+
+  The arc-arc failure is in the direct B-rep representation, not the 3D
+  geometry:
+  - build_direct_single splits the swept surface at K profile V boundaries and
+    creates each face on a non-periodic patch;
+  - production rotational sweep obtains 3D curves, UV lines and orientations
+    together from Surface::create_natural_uv_trim_curves;
+  - build_direct_chain instead uses one full periodic surface per piece, hand-
+    built loops and independently dropped UV trims.
+
+  Line-line and line-arc close because their seam representative is V=0.
+  Arc-arc gets V~1 on the rail and V=0 on the seam edge, which an unsplit
+  periodic loop cannot reconcile. Post-trim period shifts only move one side.
+
+EVIDENCE
+
+  - 3D geometry audit: seam-to-both-surfaces 3.779e-6 (PASS).
+  - UV audit: FaceId(0)/LoopuseId(1), rail EdgeId(12) V~0.999983, seam
+    EdgeId(8) V=0/0.25, check gap 0.749983.
+  - align_face_periodic_uv is called; it changes EdgeId(12) to V=-1.67e-5,
+    but check_brep still reports 0.749983 and adds a 1.0 gap. No regeneration
+    before check.
+
+RECOMMENDATION
+
+  Refactor the joint/chain side-face construction to:
+  1. split each side surface at its K profile V boundaries;
+  2. create each K face on its own non-periodic patch with local UV;
+  3. share seam vertices/edges between adjacent patches;
+  4. keep the start/end caps on the outer patches;
+  5. use the same path for line, line-arc and arc-arc (no special case).
+
+STATUS
+
+  Direct arc-arc B-rep: BLOCKED.
+  Boundary Solver / Surface Builder: PASS, unchanged.
+  N=3 direct chain: PASS.
+  AdaptiveCut: not started.
+
+ADDENDUM: PATCH-SPLIT EXPERIMENT
+
+  build_direct_chain now splits each side surface at K profile V boundaries
+  and creates side faces on the patches. No arc-arc special case.
+
+  line-line / line-arc / N=3: PASS.
+  arc-arc direct: failures 11 -> 12; V gap 0.7499833 -> 0.25.
+  Not green: the remaining 0.25 shows incomplete patch-local V mapping for
+  rails/cap/seam. Next: audit the patch-local face loop.

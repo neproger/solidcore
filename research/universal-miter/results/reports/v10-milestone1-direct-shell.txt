@@ -1,0 +1,81 @@
+# Universal miter - Milestone 1: direct shell, N=1
+version: v10
+label: milestone1-direct-shell
+head: 28d6f6afc (research changes uncommitted)
+command: cargo test --manifest-path prototype/Cargo.toml --features solidcore --test direct_shell -- --nocapture
+workspace: research/universal-miter (separate workspace; production untouched)
+
+CONSTRUCTION
+
+build_swept_surface (Level B)
+  -> split the NURBS surface at V into K=4 profile patches
+  -> profile segments from each patch U-min/U-max; V rails from the full surface
+  -> make_shell_vertex: 2K shared vertices
+  -> make_wire_edge: K start segments, K end segments, K rails
+  -> make_face_topology: K side patches + start/end caps
+  -> reset_infinite_region; set_region_is_void_flags_for_nested_solids;
+     refresh_cached_topology
+
+No create_faces_with_curves, stitch_faces, project_and_trim or Boolean.
+Side faces use OrientType::Opposite (the Level B surface normal is inward);
+caps use outward plane normals with OrientType::Same. Start cap loop reversed,
+end cap forward.
+
+RESULTS
+
+single straight (line length 2, profile radius 0.25):
+  surface_deviation=6.598e-15
+  faces=6 edges=12 vertices=8 regions=2 shells=2
+  check_brep: pointers=1000 assert=Some(true) failures=0
+  integrity::check: pass
+  edge_uses_per_edge=4
+  manifold=true outward=true
+  volume=3.926991401e-1
+  expected=3.926990817e-1 production_reference=3.926990817e-1 relative=1.486e-7
+
+single arc (R=2, 90 degrees, profile radius 0.25):
+  surface_deviation=4.347e-6
+  faces=6 edges=12 vertices=8 regions=2 shells=2
+  check_brep: pointers=1000 assert=Some(true) failures=0
+  integrity::check: pass
+  edge_uses_per_edge=4
+  manifold=true outward=true
+  volume=6.168519280e-1
+  expected=6.168502751e-1 production_reference=6.168502686e-1 relative=2.680e-6
+
+Both shells have all 6 faces and 6 faceuses; each edge has 4 edge-uses
+(2 Same + 2 Opposite). Euler: V - E + F = 8 - 12 + 6 = 2 per closed shell.
+The two regions are the expected void/solid pair.
+
+VOLUME QUERY ACCURACY
+
+brep_volume_default uses accuracy 1e-3, the same order is_outward_solid uses
+for the sign. At 1e-9 the integrator returns SM_ERR (no convergence) on the
+direct NURBS faces; that is a numerical integration limit, not a geometric
+tolerance. The 1e-3 results match the analytic and production references to the
+printed digits (1.5e-7 straight, 2.7e-6 arc). Tests assert <= 1e-5 relative.
+
+API FINDINGS
+
+1. Last make_face_topology still returns
+   Unported("SmBrep::TestClosureSplitRegion", "topology.brep_p6") after the
+   split. The split and the void/solid pair complete; the exact Unported is
+   accepted for the simple prism and the shell is validated independently.
+2. Side NURBS patches with OrientType::Same fail check_brep with
+   "Face Loop has bad orientation" and outward=false. OrientType::Opposite
+   fixes the orientation without geometry changes.
+3. Shell.faces cache after refresh: 6 faces / 6 faceuses on both shells (the
+   older AOIM empty-cache finding does not reproduce).
+4. Volume accuracy 1e-3: documented, not silently loosened.
+
+LIMITATIONS
+
+N=1 only; circular profile K=4; no joints; no arbitrary/multi-curve profiles;
+no open profile or closed/periodic path. p6 tail still unported for general
+cases. The production sweep is used only as the volume reference; the direct
+construction never calls it.
+
+NEXT
+
+Milestone 2: boundary-strategy interface and exact line-line joint with shared
+topology; Milestone 3: curved and hybrid strategies.

@@ -1,0 +1,86 @@
+# Universal miter - HybridAtJunction volume diagnostic
+version: v14
+label: hybrid-volume-diagnostic
+head: 28d6f6afc (research changes uncommitted)
+command: cargo test --manifest-path prototype/Cargo.toml --features solidcore --test direct_joint -- --nocapture direct_joint_line_arc_hybrid
+workspace: research/universal-miter (separate workspace; production untouched)
+
+CASE
+
+  line 0..1, arc centre (0,0) radius 1 from 0 to 90 degrees, circular
+  profile radius 0.25, K=4, samples 68.
+  strategy=HybridAtJunction exact=36 junction=32
+  first_junction_alpha=-0.022463609474426133
+  max rail residual=1.968e-14
+
+VOLUME VS INTEGRATION ACCURACY (base Level B: tolerance 1e-4, 129 sections)
+
+  volume@1e-3 = 5.037753825530e-1
+  volume@1e-4 = 5.037627012363e-1
+  volume@1e-5 = 5.037597106550e-1
+  reference (area x centreline length) = 5.047746784e-1
+  relative@1e-4 = 2.005e-3
+  relative@1e-5 = 2.010e-3
+
+  The 1e-4..1e-5 change is 3.0e-6 absolute (5.9e-6 relative). Mass
+  integration is not the source of the 2e-3 gap.
+
+VOLUME VS LEVEL B ACCURACY
+
+  base: tolerance 1e-4, 129 sections
+    arc surface deviation      = 5.591e-5
+    boundary deviation         = 3.963e-5
+    volume                     = 5.037627012e-1
+    relative                   = 2.005e-3
+
+  fine: tolerance 1e-5, 257 sections
+    arc surface deviation      = 1.267e-6
+    boundary deviation         = 1.908e-6
+    volume                     = 5.037683241e-1
+    relative                   = 1.994e-3
+
+  A 20x better boundary changes the relative residual by 1.1e-5. Level B
+  surface accuracy is not the source of the 2e-3 gap.
+
+  coarse: tolerance 1e-3, 65 sections
+    the seam vertex cannot be dropped within the builder tolerance:
+    "the seam point is not on the side surface" - not a usable comparison.
+
+SEAM / PARAMETRIC RANGES (base)
+
+  side a (line): domain u=[0,1], v=[0,1]
+    seam u=[0.414214,0.732233], seam v=[0,0.75]
+    drop gaps = [2.2e-16, 1.1e-16, 2.2e-16, 0]
+  side b (arc/extension): domain u=[0,1], v=[0,1]
+    seam u=[0.204780,0.464609], seam v=[0,0.75]
+    drop gaps = [3.963e-5, 3.364e-7, 3.142e-9, 6.975e-9]
+
+  Fine Level B: side b seam u=[0.204769,0.464578], max drop=1.06e-6.
+
+  Both seam U ranges are inside the surface domains; V is ordered; the arc
+  side seam lies in the start-extension U region as the junction construction
+  requires. No out-of-domain or reversed parametric seam was found.
+
+VALIDATION
+
+  check_brep pointers=1000 assert=true failures=0
+  faces/edges/vertices=10/20/12; edge uses=4; regions/shells=2/2
+  manifold=true outward=true
+
+CONCLUSION
+
+  The 2e-3 residual is localized to the hybrid seam/extension construction.
+  It is not mass integration, Level B surface approximation, an out-of-domain
+  parametric seam, or a topology/orientation failure. The exact line-arc uses
+  the same builder and measures 6.117e-6; the hybrid measures 1.99e-3.
+
+  CLOSED as a construction difference. The `area x centreline length`
+  reference belongs to the original path/exact miter; HybridAtJunction uses a
+  different joint construction, so its body and volume legitimately differ.
+  The hybrid volume is retained as a diagnostic only, not a correctness gate.
+  No independent hybrid volume reference is required.
+
+FULL SUITE
+
+  37 tests passed with the solidcore feature; fmt --check and clippy
+  -D warnings clean.

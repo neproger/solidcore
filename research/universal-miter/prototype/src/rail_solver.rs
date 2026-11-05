@@ -284,6 +284,29 @@ impl<C: PlanarCurve> Piece<C> {
         self.param_lo
     }
 
+    /// Whether the original curve is straight within the classification
+    /// tolerance.
+    ///
+    /// A straight piece's tangent extension is its own supporting line, so a
+    /// seam on that extension is still an exact offset intersection. A curved
+    /// piece's extension is a tangent continuation and is handled by the
+    /// hybrid strategies.
+    #[must_use]
+    pub fn is_linear(&self) -> bool {
+        const SAMPLES: usize = 8;
+        const CURVATURE_TOL: f64 = 1.0e-9;
+        for index in 0..=SAMPLES {
+            let s = self.param_lo + (self.param_hi - self.param_lo) * index as f64 / SAMPLES as f64;
+            let Ok((data, _)) = self.differential(s) else {
+                return false;
+            };
+            if data.curvature.abs() > CURVATURE_TOL {
+                return false;
+            }
+        }
+        true
+    }
+
     /// The extended parameter domain.
     pub fn domain(&self) -> [f64; 2] {
         [

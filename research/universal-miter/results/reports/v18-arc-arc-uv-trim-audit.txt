@@ -1,0 +1,52 @@
+# Universal miter - Arc-arc UV trim audit
+version: v18
+label: arc-arc-uv-trim-audit
+head: 28d6f6afc (research changes uncommitted)
+workspace: research/universal-miter (separate workspace; production untouched)
+
+TARGET
+
+  Arc-arc hybrid case of docs/21; 3D geometry audit PASS (docs/22).
+  Direct B-rep check_brep: 11 failures, UVEdge V gap 0.7499832976013534.
+
+FAILING LOOP
+
+  FaceId(0), LoopuseId(1) side face, K=4:
+
+    index 1: EdgeId(12) UV (0.760359, 0.999983) -> (0.760359, 0.999983)
+             rail at profile boundary 0
+    index 2: EdgeId(8)  UV (0.760351, 0.0)      -> (0.612640, 0.25)
+             seam edge on the arc side
+    index 3: EdgeId(13) UV (0.0, 0.25)          -> (0.612640, 0.25)
+             rail at profile boundary 1
+
+  The periodic transition is between EdgeId(12) at V ~ 0.999983 and the
+  seam/rail at V = 0.0/0.25. The 3D seam is the same curve (drop gap ~1e-9);
+  the UV trim coefficients are on opposite periodic representatives. The
+  0.749983 gap is 0.999983 - 0.25.
+
+OPERATION
+
+  Not the 3D seam, not the vertex assignment. The seam trim produced by
+  create_uv_trim_curve/create_uv_trim_curves on the arc side uses V~1 while
+  the builder's rail at profile boundary 0 is an iso-curve at V~0.
+
+PREVIOUS ATTEMPTS
+
+  - canonicalize seam V near v_max to v_min: no change;
+  - explicit seam UV curves passed to FaceTopologyOptions with
+    calculate_trims=true: no change;
+  - post-trim shift of constant-V rail UV curves near v_max to v_min on side
+    faces: no change.
+
+STATUS
+
+  Direct arc-arc B-rep: BLOCKED.
+  Boundary Solver / Surface Builder: unchanged and PASS.
+  Next fix: periodic V representative in the trim stage, general for periodic
+  profiles; do not special-case arc-arc.
+
+TEST
+
+  arc_arc_uv_trim_audit (ignored by default; run with --ignored) prints the
+  loop/edge UV rows above.

@@ -1,0 +1,77 @@
+# Universal miter - AOIM (#447) research audit
+version: v9
+label: aoim-447-audit
+head: 28d6f6afc (research changes uncommitted)
+workspace: research/universal-miter (separate workspace; production untouched)
+sources:
+  issue 447 "Proposal: Analytical Curved Miter for Planar Sweep Joints (AOIM)",
+  comment by neproger (2026-10-22),
+  branch research/aoim-line-arc @ 9920e32f:
+    BREP_PLAN.md, BREP_REPORT_RU.md, src/sweep.rs, src/sweep3d.rs,
+    src/adaptive.rs, src/continuing.rs, probes/brep_probe/src/main.rs
+
+VERDICT
+
+AOIM is the correct architectural direction and the direct shared-topology
+B-rep prototype is real. It is a probe for a rectangular/analytic class, not a
+general or certified solution. Our Level A/B are more general and can supply
+the miter loops and NURBS surfaces; the missing work is porting and validating
+the AOIM topology builder on the current kernel.
+
+SUPPORTED
+
+- Exact line-arc miter (parabola) in the 2D suite; Level A independently has
+  line_arc_is_the_analytic_parabola.
+- Direct shared topology via make_shell_vertex, make_wire_edge,
+  make_face_topology; no BrepIntersect, Boolean, ProjectAndTrim, StitchFaces
+  in the probe.
+- Shared vertices/edges; 4 edge-uses per edge (2 Same + 2 Opposite).
+- 90/30/150/179 line-arc prisms; 8/18/12 and 9/21/14; both caps-first and
+  sides-first orders; 2 shells/2 regions (void + solid).
+
+NOT CERTIFIED / NOT COVERED
+
+- Volume: brep_volume was blocked by SmSurface::DropCurve at publication; the
+  probe did not measure volume (expected area * height only analytically).
+- Outward orientation: orient_trimmed_surfaces was blocked by
+  CalculateBoundingBox; the probe checked orientation counts, not outward
+  normals.
+- TestClosureSplitRegion tail: make_face_topology still returns
+  Unported(topology.brep_p6) after the split (current p6.rs:2396). The simple
+  prism split completes and the flags are correct; the omitted tail
+  (FindAndSetInfiniteRegion, IsInnerShell, RayFire, cleanup) is not exercised.
+- Shell.faces cache was empty while the faceuse list was complete.
+- General rectangular profiles, holes, reflex/self-intersections, arbitrary
+  profiles/NURBS, multiple path pieces/joints, and performance are not covered.
+- The 68 passing tests are the 2D/adaptive/continuation suite, not the direct
+  B-rep probe; the probe is manual and not in CI.
+- Hybrid/tangent/adaptive strategies are research alternatives/negative
+  controls; they are not the exact AOIM target and must not become fallbacks.
+
+RELATION TO OUR WORK
+
+Level A = exact miter source (more general than the AOIM line/arc 2D class).
+Gate 0 = preprocessing.
+Level B = NURBS side surface; AOIM used plane/cylinder patches for a
+rectangular vertical extrusion.
+v4 = not the target.
+v5-v7 = useful topology experiments, not the final architecture.
+v8 = production topology audit and validation reference (exact volumes:
+  3.926991e-1 single/line-line, 6.168503e-1 arc, 5.890486e-1 three line-line);
+  its stitch_and_orient + trim/boolean is not the AOIM assembly.
+
+NEXT
+
+1. Port the AOIM direct builder to the current branch (new direct_brep.rs or
+   brep_builder.rs), preserving the AOIM branch as reference.
+2. Use Level A seam loops split into open edges and Level B NURBS side
+   surfaces; caps as planar faces from the outer profile loops.
+3. Revalidate on current main: 4 edge-uses, 2 shells/2 regions,
+   volume/orientation/integrity, p6 Unported split handling, Shell.faces cache.
+4. Generalize to N path pieces and closed circular profiles; test N=1,2,3,
+   line-arc and mixed; keep the AOIM 90-degree prism as regression.
+5. Do not use the hybrid/tangent strategies as a fallback; refuse at
+   documented limits.
+
+Production files and public APIs unchanged. Branch research/aoim-line-arc is
+preserved, not deleted.

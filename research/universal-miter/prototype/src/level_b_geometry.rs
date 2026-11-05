@@ -138,10 +138,10 @@ impl Default for SurfaceBuildOptions {
             max_refinements: 6,
             max_sections: 128,
             degree: 3,
-            analytic_samples_v: 33,
-            analytic_samples_u: 33,
-            surface_samples_v: 17,
-            surface_samples_u: 17,
+            analytic_samples_v: 81,
+            analytic_samples_u: 41,
+            surface_samples_v: 9,
+            surface_samples_u: 5,
         }
     }
 }
@@ -434,22 +434,79 @@ fn measure_deviation(
             let point = surface
                 .evaluate_point(k, Point2::new(u, v))
                 .map_err(SurfaceBuildError::Kernel)?;
-            let distance = closest_analytic(
-                analytic,
-                point,
-                options.analytic_samples_v.max(8),
-                options.analytic_samples_u.max(8),
-            )?;
+            // The reverse check only needs a coarse basin for the golden polish;
+            // the forward check above is the dense acceptance sample.
+            let distance = closest_analytic(analytic, point, 33, 17)?;
             worst = worst.max(distance);
         }
     }
     Ok(worst)
 }
 
+/// Build the swept surface through explicit cross sections at the path
+/// parameters `sections`, without the adaptive tolerance loop.
+///
+/// The sections are interpolated (`approx_tol = 0`), so the input sections are
+/// contained in the result; the tolerance is only measured here. `sections` is
+/// used in the given order and must hold at least two finite parameters.
+///
+/// # Errors
+///
+/// [`SurfaceBuildError`] for a kernel failure, a degenerate input or fewer than
+/// two sections.
+pub fn build_swept_surface_with_sections(
+    k: &Kernel,
+    path: &BSplineCurve,
+    profile: &BSplineCurve,
+    plane_normal: Vec3,
+    sections: &[f64],
+    options: &SurfaceBuildOptions,
+) -> Result<BuiltSweptSurface, SurfaceBuildError> {
+    if sections.len() < 2 {
+        return Err(SurfaceBuildError::Degenerate(
+            "at least two cross sections are required",
+        ));
+    }
+    if sections.iter().any(|value| !value.is_finite()) {
+        return Err(SurfaceBuildError::Degenerate(
+            "a cross section parameter is not finite",
+        ));
+    }
+    let analytic = AnalyticSweep::new(path, profile, plane_normal)?;
+    let mut curves = Vec::with_capacity(sections.len());
+    for &v in sections {
+        curves.push(analytic.section(v)?);
+    }
+    let surface = BSplineSurface::create_skinned_surface(
+        k,
+        &curves,
+        SkinnedSurfaceOptions {
+            synchronized: false,
+            cross_section_surf_param: SurfParamType::U,
+            approx_tol: 0.0,
+            rail1: None,
+            rail2: None,
+            rail1_used_as_spine_curve: false,
+            intersections_with_rails: None,
+            deriv_surfs: None,
+            degree: options.degree,
+        },
+    )
+    .map_err(SurfaceBuildError::Kernel)?;
+    let wrapped = Surface::from(surface.clone());
+    let deviation = measure_deviation(k, &analytic, &wrapped, options)?;
+    Ok(BuiltSweptSurface {
+        surface,
+        max_deviation: deviation,
+        sections: sections.len(),
+        refinements: 0,
+    })
+}
+
 /// Build the swept surface of `profile` along `path` with the analytic frame
 /// `(tangent, plane_normal x tangent, plane_normal)`.
 ///
-/// The surface is fitted through adaptive cross sections with
+/// The surface is interpolated through adaptive cross sections with
 /// `BSplineSurface::create_skinned_surface`; the returned deviation is measured
 /// geometrically in both directions, including points between the fit sections.
 /// The profile must lie in the start normal plane `(normal, plane_normal)`; a
@@ -472,33 +529,20 @@ pub fn build_swept_surface(
             "surface tolerance must be positive and finite",
         ));
     }
-    let analytic = AnalyticSweep::new(path, profile, plane_normal)?;
-    let (v_domain, _) = analytic.domain();
-    let mut v_parameters = vec![v_domain[0], v_domain[1]];
+    let interval = path.natural_interval();
+    let mut v_parameters = vec![interval.min(), interval.max()];
     let mut refinements = 0usize;
     loop {
-        let mut sections = Vec::with_capacity(v_parameters.len());
-        for &v in &v_parameters {
-            sections.push(analytic.section(v)?);
-        }
-        let surface = BSplineSurface::create_skinned_surface(
+        let mut built = build_swept_surface_with_sections(
             k,
-            &sections,
-            SkinnedSurfaceOptions {
-                synchronized: false,
-                cross_section_surf_param: SurfParamType::U,
-                approx_tol: options.tolerance,
-                rail1: None,
-                rail2: None,
-                rail1_used_as_spine_curve: false,
-                intersections_with_rails: None,
-                deriv_surfs: None,
-                degree: options.degree,
-            },
-        )
-        .map_err(SurfaceBuildError::Kernel)?;
-        let wrapped = Surface::from(surface.clone());
-        let deviation = measure_deviation(k, &analytic, &wrapped, options)?;
+            path,
+            profile,
+            plane_normal,
+            &v_parameters,
+            options,
+        )?;
+        built.refinements = refinements;
+        let deviation = built.max_deviation;
         let sections_count = v_parameters.len();
         let can_refine = deviation > options.tolerance
             && refinements < options.max_refinements
@@ -512,12 +556,7 @@ pub fn build_swept_surface(
                     refinements,
                 });
             }
-            return Ok(BuiltSweptSurface {
-                surface,
-                max_deviation: deviation,
-                sections: sections_count,
-                refinements,
-            });
+            return Ok(built);
         }
         let mut refined = Vec::with_capacity(v_parameters.len() * 2 - 1);
         for pair in v_parameters.windows(2) {

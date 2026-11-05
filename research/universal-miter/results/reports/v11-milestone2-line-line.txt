@@ -1,0 +1,83 @@
+# Universal miter - Milestone 2: boundary strategy + exact line-line
+version: v11
+label: milestone2-line-line
+head: 28d6f6afc (research changes uncommitted)
+command: cargo test --manifest-path prototype/Cargo.toml --features solidcore --test direct_joint -- --nocapture
+workspace: research/universal-miter (separate workspace; production untouched)
+
+ARCHITECTURE
+
+Boundary solver  prototype/src/boundary.rs
+  BoundaryStrategy trait + BoundarySolver + ExactLineLine
+  input: two segment kinds, path-plane frame, placed profile, original paths,
+         extension, K, samples per segment
+  output: K shared seam curves, K seam vertices, diagnostics
+  no B-rep dependency
+
+Surface builder  prototype/src/level_b_geometry.rs
+  NURBS side surfaces for the extended pieces
+
+B-rep builder    prototype/src/direct_brep.rs
+  build_direct_joint: shared vertices/edges/faces, caps, shell
+  no Boolean / ProjectAndTrim / StitchFaces
+
+BOUNDARY SOLVER
+
+strategy=ExactLineLine samples=68 segments=4 max_residual=2.289e-16
+
+DIRECT JOINT RESULT (K=4)
+
+surface_deviation_a=4.657e-15
+surface_deviation_b=4.621e-15
+boundary_deviation_from_both_surfaces=8.854e-7
+faces=10 edges=20 vertices=12 regions=2 shells=2
+check_brep: pointers=1000 assert=Some(true) failures=0
+integrity::check: pass
+edge_uses_per_edge=4
+manifold=true outward=true
+volume=3.926987504e-1
+expected=3.926990817e-1
+production_reference=3.926990634e-1
+relative_to_analytic=8.437e-7
+relative_to_production=7.972e-7
+
+Topology: side faces 2K=8, caps 2, total 10; edges 5K=20; vertices 3K=12;
+V-E+F = 12-20+10 = 2 per shell. All edges have 4 edge-uses. The seam edges are
+shared by the two adjacent side-face patches.
+
+VOLUME QUERY
+
+brep_volume_default at 1e-3 -> 3.927325756e-1 (8.5e-5 relative).
+brep_volume_default at 1e-4 -> 3.926987504e-1 (8.4e-7 relative).
+The tighter 1e-4 accuracy is used; tests assert <= 1e-5 relative.
+1e-9 remains a kernel integrator convergence limit, not a geometric tolerance.
+
+FINDINGS
+
+1. The side-surface V parameter must come from dropping the seam vertices
+   (result_uv.y), not from the profile contour fraction i/K. Using i/K produced
+   edge/loop validation gaps; using the drop result fixed the loop endpoints.
+2. The last make_face_topology still returns the p6 TestClosureSplitRegion
+   Unported after the split. The split completes; the exact Unported is
+   accepted and the whole shell is validated independently.
+3. Side faces use OrientType::Opposite (Level B surface normal is inward);
+   caps use outward plane normals and OrientType::Same.
+4. The exact miter sample points have rail residual 2.3e-16; the interpolated
+   seam curve deviates 8.9e-7 from both side surfaces.
+
+LIMITATIONS
+
+Exact line-line only; circular profile K=4; one joint/two segments. No
+line-arc, arc-arc or hybrid/adaptive strategies yet. The seam between samples
+is interpolated (sample points exact). p6 tail and the 1e-9 volume integrator
+limit remain kernel gaps. Production sweep is used only as the volume
+reference; the direct construction never calls it.
+
+MILESTONE 1 REMAINS PASS
+
+direct_shell_single_straight and direct_shell_single_arc still pass.
+
+NEXT
+
+Milestone 3: curved/hybrid strategies behind the same BoundaryStrategy
+interface, starting with line-arc.

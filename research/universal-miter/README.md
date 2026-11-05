@@ -1,65 +1,74 @@
-# Universal miter — research module
+# PlanarSweep2 research
 
-An isolated laboratory for the Planar Sweep miter and the alternative
-`create_sweep_along_planar_path2`. The research target is the kernel geometry,
-so it lives **inside SolidCore**, but it is not part of the production build and
-it does not change the production Planar Sweep.
+An isolated laboratory for **PlanarSweep2**: a Planar Sweep that analyses the
+flat path first, constructs a mathematically valid boundary between adjacent
+segments, and builds the B-rep directly from those boundaries. No Boolean,
+`ProjectAndTrim` or `StitchFaces` forms the joints.
+
+The main specification is
+[`docs/16-planarsweep2-task.md`](docs/16-planarsweep2-task.md). The AOIM
+research audit is
+[`docs/15-aoim-447-audit.md`](docs/15-aoim-447-audit.md). **Milestone 1 is
+PASS**: one direct shell for a straight/arc piece with a circular profile, one
+solid region, exact volume against the analytic and production references; see
+[`docs/17-milestone1-direct-shell.md`](docs/17-milestone1-direct-shell.md).
+**Milestone 2 is PASS for `ExactMiter`** (line–line and exact line–arc) and
+**PASS for the `HybridAtJunction` boundary/topology**. Its volume is a
+diagnostic, not a gate: it belongs to a different joint construction
+(`docs/19`). Both go through the same differential/offset pipeline; see
+[`docs/18-milestone2-line-line.md`](docs/18-milestone2-line-line.md).
+**N-segment direct builder is PASS** for an open 3-piece chain; see
+[`docs/20-n-segment-direct-builder.md`](docs/20-n-segment-direct-builder.md).
+The arc–arc boundary matrix passes and the 3D geometry audit passes
+(`docs/22`), but the arc–arc direct B-rep is **blocked** on the periodic profile
+V seam trim; see
+[`docs/21-arc-arc-direct-blocked.md`](docs/21-arc-arc-direct-blocked.md).
 
 Production code (`crates/solidcore/.../p2/planar_path.rs`) and the public API
-are untouched. The production build is unrelated to this directory.
+are untouched. This directory is not a member of the root workspace.
 
-## Status
+## Foundations kept
 
-- **Stage 1–3 research:** the existing construction, the mathematical model and
-  the independent validation are in `docs/` and `results/`.
-- **Level A implemented; Gate 1 PASS; audit PASS.** The Rust rail solver
-  implements the differential geometry, the G1 offset rails, the damped
-  fixed-alpha Newton, the two-direction continuation, the fold/cusp/domain
-  refusals and the independent signed-distance validation. 22 tests pass; the
-  Gate 1 evidence is in `docs/06-experiment-results.md`,
-  `results/reports/v1-gate1-rust.txt` and
-  `results/reports/v1a-gate1-audit-rust.txt`; the audit is
-  `docs/08-level-a-audit.md`.
-- **Gate 0 preprocessing parity PASS.** The normalizer in
-  `prototype/src/planar_sweep2.rs` reproduces the production Planar Sweep
-  preparation; 9 tests pass. The production cap matches the whole-path
-  normalizer; the single-segment WR-660 wrapper differs; rational weights,
-  planarity, caps and extension are covered. See
-  `docs/11-gate0-preprocessing.md` and
-  `results/reports/v0-gate0-preprocessing.txt`. The private
-  `prepare_curve_sweep` is reproduced as `PreparedPiece`.
-- **Planar Sweep2 surfaces are not started.** After Gate 0 approval the
-  alternative builds its own swept surfaces, joints and B-rep.
-  `Original` is the existing `create_sweep_along_planar_path`. The general
-  `create_curve_sweep` and spatial paths are out of scope. The exact contract,
-  architecture and open decisions are `docs/09-sweep2-scope.md`; the input
-  normalization audit is `docs/10-preprocessing-audit.md`; approval is pending.
-- The `MiterStrategy::Original` of the Level A joint harness deliberately remains
-  `NotImplemented`; the operation-level `Original` is the existing Planar Sweep
-  in the Planar Sweep2 comparison.
-- The Python validator remains the independent mathematical reference and its
-  baseline is `results/reports/initial-validation.txt`.
+- **Level A** (`prototype/src/curve.rs`, `differential_geometry.rs`,
+  `rail_solver.rs`, `miter_curve.rs`, `validation.rs`, `harness.rs`): the planar
+  rail/differential mathematics.
+- **Gate 0 input preprocessing** (`prototype/src/planar_sweep2.rs`, feature
+  `solidcore`): path/profile normalization and unification. It reproduces the
+  production preprocessing where those helpers are private. The production
+  Planar Sweep is used only as the parity reference for this preparation, not
+  for the new joint construction.
+- **Level B surface builder** (`prototype/src/level_b_geometry.rs`, feature
+  `solidcore`): controlled NURBS swept surfaces and their accuracy checks.
+- **Python reference** (`prototype-python/miter_validator.py` and
+  `results/reports/initial-validation.txt`): the original independent
+  mathematical reference and its immutable baseline. Preserved; not used as a
+  source of C++/kernel state.
+
+The AOIM research branch is a separate reference:
+`research/aoim-line-arc` (`BREP_PLAN.md`, `BREP_REPORT_RU.md`,
+`probes/brep_probe/`). It is the direct shared-topology B-rep prototype
+(`make_shell_vertex` + `make_wire_edge` + `make_face_topology`), not part of
+this workspace.
 
 ## Layout
 
 ```
 research/universal-miter/
-├── README.md                 this file
-├── AGENTS.md                 rules for this sandbox
-├── Cargo.toml                separate workspace (not a member of the root one)
+├── README.md
+├── AGENTS.md
+├── Cargo.toml                 separate workspace
 ├── docs/
-│   ├── 01-problem-definition.md
-│   ├── 02-existing-sweep-analysis.md
-│   ├── 03-mathematical-model.md
-│   ├── 04-solver-design.md
-│   ├── 05-test-matrix.md
-│   ├── 06-experiment-results.md
-│   ├── 07-integration-plan.md
-│   ├── 08-level-a-audit.md
-│   ├── 09-sweep2-scope.md
-│   ├── 10-preprocessing-audit.md
-│   └── 11-gate0-preprocessing.md
-├── prototype/                Rust level A (math) + level B (feature `solidcore`)
+│   ├── 15-aoim-447-audit.md
+│   ├── 16-planarsweep2-task.md
+│   ├── 17-milestone1-direct-shell.md
+│   ├── 18-milestone2-line-line.md
+│   ├── 19-line-arc-volume-diagnostic.md
+│   ├── 20-n-segment-direct-builder.md
+│   ├── 21-arc-arc-direct-blocked.md
+│   ├── 22-arc-arc-geometric-consistency-audit.md
+│   ├── 23-arc-arc-uv-trim-audit.md
+│   └── 24-direct-brep-architecture-audit.md
+├── prototype/
 │   ├── Cargo.toml
 │   ├── src/
 │   │   ├── lib.rs
@@ -69,78 +78,69 @@ research/universal-miter/
 │   │   ├── miter_curve.rs
 │   │   ├── validation.rs
 │   │   ├── harness.rs
-│   │   ├── planar_sweep2.rs  only with `--features solidcore`
-│   │   └── solidcore_api.rs  only with `--features solidcore`
+│   │   ├── planar_sweep2.rs       feature solidcore (Gate 0 preprocessing)
+│   │   ├── level_b_geometry.rs    feature solidcore (NURBS surface builder)
+│   │   ├── boundary.rs            feature solidcore (boundary strategies)
+│   │   └── direct_brep.rs         feature solidcore (direct shell/joint/chain)
 │   └── tests/
 │       ├── smoke.rs
 │       ├── matrix.rs
-│       └── gate0.rs          only with `--features solidcore`
+│       ├── gate0.rs               feature solidcore
+│       ├── direct_shell.rs        feature solidcore
+│       └── direct_joint.rs        feature solidcore
 ├── prototype-python/
-│   ├── miter_validator.py    independent mathematical validator
-│   └── run_report.py         versioned report wrapper (does not edit the validator)
-├── fixtures/                 reproducible inputs (line, arc, bezier, bspline)
-├── experiments/              baseline, invariance, singularities, profile variations
+│   ├── miter_validator.py
+│   └── run_report.py
 └── results/
-    ├── reports/              versioned reports; initial-validation.txt is immutable
-    ├── numerical/            raw numeric data
-    └── visualizations/
+    ├── reports/initial-validation.txt        immutable baseline
+    ├── reports/v9-aoim-447-audit.txt
+    ├── reports/v10-milestone1-direct-shell.txt
+    ├── reports/v11-milestone2-line-line.txt
+    ├── reports/v12-universal-boundary-line-arc.txt
+    ├── reports/v13-universal-boundary-hybrid.txt
+    ├── reports/v14-hybrid-volume-diagnostic.txt
+    ├── reports/v15-n-segment-direct-builder.txt
+    ├── reports/v16-arc-arc-matrix-blocked.txt
+    ├── reports/v17-arc-arc-geometric-consistency.txt
+    ├── reports/v18-arc-arc-uv-trim-audit.txt
+    └── reports/v19-direct-brep-architecture-audit.txt
 ```
+
+## Milestones
+
+From `docs/16-planarsweep2-task.md`:
+
+1. Direct shell, N=1 (AOIM shared topology with Level B NURBS).
+2. Universal Boundary Construction Pipeline: shared differential interface,
+   `ExactMiter` for any two planar segments, `HybridAtJunction` for the missing
+   side, direct two-piece shell. Line–line and exact line–arc are the exact
+   cases; the 90° line–arc exercises the junction continuation.
+3. Remaining strategies: separate bisector-limit and adaptive-cut
+   constructions, plus the limit-tangent negative control; then arc-arc and
+   spline-spline configurations.
+4. N segments and closed path: the open N-chain is implemented; closed/periodic
+   closure is next.
+5. Profile coverage and integration (replace or separate production method).
 
 ## Commands
 
 ```sh
-# Independent mathematical validator (level 0 reference)
-python research/universal-miter/prototype-python/miter_validator.py
+export CARGO_BUILD_JOBS=2
 
-# Versioned report; never overwrites the baseline
-python research/universal-miter/prototype-python/run_report.py \
-  --version v0 --label matrix --param case=line-arc
-
-# Rust level A (no kernel dependency)
+cargo fmt   --manifest-path research/universal-miter/prototype/Cargo.toml --check
 cargo build --manifest-path research/universal-miter/prototype/Cargo.toml
 cargo test  --manifest-path research/universal-miter/prototype/Cargo.toml
-cargo test  --manifest-path research/universal-miter/prototype/Cargo.toml \
-  --test matrix gate1_report -- --nocapture
-
-# Rust level B (uses the real kernel; never part of the production build)
 cargo check --manifest-path research/universal-miter/prototype/Cargo.toml --features solidcore
+cargo test  --manifest-path research/universal-miter/prototype/Cargo.toml --features solidcore
 ```
 
-On the shared machine keep `CARGO_BUILD_JOBS=2`; the repository's
-`.cargo/config.toml` sends artifacts to the root `bin/` (gitignored).
+`RUSTC_WRAPPER=sccache` may be set when sccache is installed; the repository
+does not require it.
 
-## Isolation guarantees
+## Boundary
 
-- `research/universal-miter/Cargo.toml` is its own workspace. The root workspace
-  lists members explicitly and does not include it.
-- The default prototype build has **no** dependency on `solidcore`. The real
-  kernel is reachable only with the off-by-default `solidcore` feature.
-- The production `planar_path.rs` is not modified. Integration is a later,
-  separately gated step (`docs/07-integration-plan.md`).
-
-## Comparing strategies
-
-`prototype/src/harness.rs` defines the common interface:
-
-```rust
-pub enum MiterStrategy { Original, Universal }
-
-pub struct MiterTestCase {
-    pub id: String,
-    pub curve_a: CurveSpec,
-    pub curve_b: CurveSpec,
-    pub profile: ProfileSpec,
-    pub expected: Option<ExpectedGeometry>,
-}
-
-pub struct MiterResult {
-    pub strategy: MiterStrategy,
-    pub status: MiterStatus,
-    pub curve: Option<MiterCurve>,
-    pub diagnostics: MiterDiagnostics,
-}
-```
-
-One case runs through both strategies. Geometry, accuracy, B-rep topology,
-manifold, volume, numerical stability and time are compared **separately**.
-Equal topology is not accepted as proof of geometric equivalence.
+- Do not modify production files, the public API or the root workspace.
+- Do not add this workspace to the root `Cargo.toml`.
+- The mathematical strategy set and typed refusals are in
+  `docs/16-planarsweep2-task.md`.
+- Integration into production is a separate, gated step.
