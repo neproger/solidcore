@@ -1,0 +1,46 @@
+planarsweep architecture audit
+==============================
+
+profile-specific code
+- source_selection::is_circular_profile
+- circular-arc/circular-profile classifier
+- all_arc_paths / original_arc_profile special source placement
+- exact_geometry arc_sweep_surface (Torus)
+- arc_arc_oracle test only
+
+universal code
+- normalization, source Surface abstraction, boundary rail solver,
+  BoundaryStrategy trait, validator, direct builder, policy/provenance
+
+447 strategies
+implemented: ExactMiter, HybridAtJunction, HybridAtLimitTangent
+not implemented: HybridAtLimitBisector, AdaptiveCut
+BoundarySolver selection between ExactMiter/HybridAtJunction is hardcoded
+
+duplication
+- rail solver vs exact source geometry
+- arc_arc oracle intentionally independent (test-only)
+- original vs prepared profile placement in source_selection
+- boundary B-spline paths vs exact arc source paths
+
+extensibility
+- new profile: LevelB works without high-level change; exact support requires
+  source_selection/exact_geometry changes
+- new strategy: BoundaryStrategy exists, but solver selection/registry is missing
+- generated geometry: policy/provenance types exist, pipeline dispatch missing
+
+risks
+1 circular-profile/all-arc branches
+2 hardcoded strategy selection
+3 original vs prepared coordinate systems
+4 generated provenance not yet in pipeline
+5 documented low-level direct_brep bypass
+
+recommended contracts
+- SourceProvider / source registry
+- BoundaryProblem with surfaces, domains, profile mapping, policy
+- BoundarySolver strategy registry/factory
+- validator remains independent
+- GeometryPolicy gates generated strategies; ExactOnly default
+
+no new strategy, solver, builder or tolerance change

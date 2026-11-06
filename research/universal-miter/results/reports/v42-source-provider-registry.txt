@@ -1,0 +1,38 @@
+source provider registry
+=======================
+
+implemented
+- SourceInput: kernel, normalized sweep, placement, index, options
+- SourceSupport: Applicable, NotApplicable, Unsupported
+- SourceProvider: kind, supports, build
+- ExactExtrusionProvider, ExactRevolutionProvider, LevelBProvider
+- SourceProviderRegistry: first applicable provider
+- classify_piece and select_sweep_sources use the registry
+- applicable provider build failure is final; no fallback
+
+behavior preserved
+- exact extrusion / revolution / LevelB classification unchanged
+- source placement and current geometry unchanged
+- high-level exact/mixed tests pass
+- open arc-arc typed refusal remains
+
+remaining
+- public injection/registration point for custom provider sets
+- boundary strategy registry/classification (currently junction_samples)
+- generated pieces/interfaces in result
+
+no solver/builder/validator/tolerance change
+
+registry audit update
+- SourceSupport::{Applicable, NotApplicable, Unsupported, Fallback}
+- explicit provider order: ExactExtrusion, ExactRevolution, LevelB
+- multiple exact Applicable => ProviderAmbiguous
+- LevelB selected only as fallback
+- applicable exact build failure remains final; no fallback
+- classify_piece and select_sweep_sources both use registry
+
+remaining source-truth audit
+- Exact Revolution uses original arc geometry
+- Exact Extrusion uses placed/prepared path data
+- SourceInput carries normalized + placement; authority per provider must be documented/validated next
+

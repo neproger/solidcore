@@ -16,7 +16,7 @@ use core::fmt;
 
 use crate::curve::GeometryError;
 use crate::differential_geometry::{
-    add, cross, dist, dot, norm, rot90, scale, sub, unit, DifferentialData,
+    DifferentialData, add, cross, dist, dot, norm, rot90, scale, sub, unit,
 };
 
 /// A planar curve the rail solver can evaluate: the Level A `CurveSpec` or the

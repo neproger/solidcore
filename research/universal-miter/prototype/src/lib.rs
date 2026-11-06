@@ -20,6 +20,18 @@
 //! `../prototype-python/` and `../results/reports/initial-validation.txt` are
 //! preserved as the original mathematical reference.
 //!
+//! ## API boundary
+//!
+//! The validated high-level entry point is
+//! [`planar_pipeline::build_planar_sweep`]. It runs source selection, boundary
+//! solving, independent boundary validation, and only then the Direct builder.
+//!
+//! `boundary_validation` is the public independent acceptance gate. The modules
+//! `direct_brep`, `boundary`, `exact_geometry`, `level_b_geometry`,
+//! `planar_sweep2` and `source_selection` are prototype-level building blocks:
+//! they are reachable from an external crate (this is a research crate), but
+//! using them directly bypasses the high-level validation invariant.
+//!
 //! Rules for this sandbox are in `../AGENTS.md`. Production files and the public
 //! API are not touched.
 #![forbid(unsafe_code)]
@@ -34,8 +46,16 @@ pub mod validation;
 #[cfg(feature = "solidcore")]
 pub mod boundary;
 #[cfg(feature = "solidcore")]
+pub mod boundary_validation;
+#[cfg(feature = "solidcore")]
 pub mod direct_brep;
+#[cfg(feature = "solidcore")]
+pub mod exact_geometry;
 #[cfg(feature = "solidcore")]
 pub mod level_b_geometry;
 #[cfg(feature = "solidcore")]
+pub mod planar_pipeline;
+#[cfg(feature = "solidcore")]
 pub mod planar_sweep2;
+#[cfg(feature = "solidcore")]
+pub mod source_selection;

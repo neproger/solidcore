@@ -1,0 +1,60 @@
+arc-arc refusal contract
+========================
+
+scope
+- two bounded original circular arcs, circular profile, no extension
+- exact Torus bands only
+
+existence
+- valid point requires same-theta offset-circle intersection inside both
+  original arc domains
+- generic Torus/Torus intersection is not sufficient
+
+independent oracle
+samples=68
+missing_intersections=0
+outside_both_original_arc_domains=33
+multiple_branches=0
+branch_discontinuities=0
+first_outside_sample=35
+
+result
+no full exact common boundary exists for the current Open Arc-Arc case.
+This is geometric, not a Torus or Boundary Solver numerical failure.
+
+required behavior
+- typed UncoveredProfile / OutsideOriginalArcDomain
+- retain first failing theta, covered/uncovered counts, ranges and reason
+- no tangent extension, Hybrid fallback, Level B fallback or unvalidated B-rep
+- refusal must be distinct from numerical/topology errors
+
+validator
+boundary_validation::validate_joint_boundary remains the acceptance gate.
+
+future separate strategies
+- explicit extension surface
+- adaptive cut / bridge
+These have separate contracts and are not part of ArcArcMiter.
+
+status
+- Exact Torus: PASS
+- indexed profile: PASS
+- open arc-arc exact boundary: NOT PRESENT
+- arc-arc typed refusal: required
+- ArcArcMiter: not implemented for this case
+- solver/builder/tolerances unchanged
+
+high-level integration
+- validate_joint_boundary runs before build_direct_chain_surfaces
+- validation failure maps to PlanarSweepError::BoundaryValidation
+- Direct builder is not called for a rejected boundary
+
+high-level tests
+line-line-line exact:   max_gap=8.854e-7  PASS
+line-arc-line exact:    max_gap=7.136e-8  PASS
+line-arc mixed LevelB:  max_gap=1.320e-6  PASS
+open arc-arc:           typed refusal
+  seam sample 1 of segment 2 is not on surface 0: gap=2.1086334742979336e-2
+
+high_level_open_arc_arc_returns_typed_refusal: PASS (not ignored)
+

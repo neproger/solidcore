@@ -655,6 +655,97 @@ fn arc_arc_geometric_consistency() {
     assert!(combined <= 1.0e-4);
 }
 #[test]
+#[ignore = "manual cap boundary audit"]
+#[allow(clippy::needless_pass_by_value)]
+fn cap_boundary_audit() {
+    fn case(name: &str, path_a: BSplineCurve, path_b: BSplineCurve) {
+        let paths = [Curve::from(path_a.clone()), Curve::from(path_b.clone())];
+        let k = Kernel::default();
+        let frame = PathFrame::new(&k, &paths).expect("frame");
+        let profile_input =
+            Curve::from(api_curves::create_circle(Point3::ZERO, 0.25).expect("circle"));
+        let normalized =
+            normalize_planar_sweep(&k, &[profile_input], &paths, true, 3).expect("normalize");
+        let (start, start_tangent) = endpoint(&path_a, false);
+        let (end, end_tangent) = endpoint(&path_b, true);
+        let start_normal = start_tangent.unitize().expect("start normal");
+        let end_normal = end_tangent.unitize().expect("end normal");
+        let mut surfaces = Vec::new();
+        for placement in &normalized.placements {
+            let profile = to_bspline(&placement.world_profiles[0]).expect("profile");
+            surfaces.push(
+                build_swept_surface(
+                    &k,
+                    &placement.path_piece,
+                    &profile,
+                    frame.normal,
+                    &options(),
+                )
+                .expect("surface")
+                .surface,
+            );
+        }
+        let first = Surface::from(surfaces[0].clone());
+        let last = Surface::from(surfaces[1].clone());
+        let first_domain = first.natural_uv_domain_with_nurb(&k).expect("first domain");
+        let last_domain = last.natural_uv_domain_with_nurb(&k).expect("last domain");
+        let first_curve = first
+            .create_iso_parametric_curve(
+                &k,
+                solidcore::nurbs::b_spline_surface::SurfParamType::U,
+                first_domain.min().x,
+                1.0e-7,
+                None,
+                false,
+            )
+            .expect("first cap curve")
+            .curve;
+        let last_curve = last
+            .create_iso_parametric_curve(
+                &k,
+                solidcore::nurbs::b_spline_surface::SurfParamType::U,
+                last_domain.max().x,
+                1.0e-7,
+                None,
+                false,
+            )
+            .expect("last cap curve")
+            .curve;
+        let deviation = |curve: &Curve, origin: Point3, normal: Vec3| {
+            let interval = curve.natural_interval();
+            let mut worst = 0.0_f64;
+            for index in 0..=16 {
+                let t = interval.evaluate(f64::from(index) / 16.0);
+                let point = curve.evaluate_point(&k, t).expect("cap point");
+                worst = worst.max(((point - origin).dot(normal)).abs());
+            }
+            worst
+        };
+        println!(
+            "CAP-AUDIT {name}: closed={} original_start={start:?} original_end={end:?} prepared_start={:?} prepared_end={:?} first_u=[{:.9},{:.9}] last_u=[{:.9},{:.9}] start_plane_dev={:.9e} end_plane_dev={:.9e}",
+            normalized.closed,
+            normalized.placements[0].path_piece.evaluate_point(normalized.placements[0].path_piece.natural_interval().min()).expect("prepared start"),
+            normalized.placements[1].path_piece.evaluate_point(normalized.placements[1].path_piece.natural_interval().max()).expect("prepared end"),
+            first_domain.min().x,
+            first_domain.max().x,
+            last_domain.min().x,
+            last_domain.max().x,
+            deviation(&first_curve, start, start_normal),
+            deviation(&last_curve, end, end_normal),
+        );
+    }
+    case(
+        "line-arc",
+        line(Point3::new(0.0, 0.0, 0.0), Point3::new(1.0, 0.0, 0.0)),
+        arc(Point3::ZERO, 1.0, 0.0, 90.0),
+    );
+    case(
+        "arc-arc",
+        arc(Point3::new(0.0, 1.0, 0.0), 1.0, -180.0, -90.0),
+        arc(Point3::new(-1.0, 0.0, 0.0), 1.0, 0.0, 90.0),
+    );
+}
+#[test]
 #[ignore = "manual UV trim audit"]
 fn arc_arc_uv_trim_audit() {
     let path_a = arc(Point3::new(0.0, 1.0, 0.0), 1.0, -180.0, -90.0);
@@ -735,6 +826,62 @@ fn arc_arc_uv_trim_audit() {
             }
         }
     }
+    let start_origin = path_a
+        .evaluate_point(path_a.natural_interval().min())
+        .expect("start origin");
+    let end_origin = path_b
+        .evaluate_point(path_b.natural_interval().max())
+        .expect("end origin");
+    let (_, start_tangent_audit) = endpoint(&path_a, false);
+    let (_, end_tangent_audit) = endpoint(&path_b, true);
+    let start_normal_audit = start_tangent_audit.unitize().unwrap_or(Vec3::ZERO);
+    let end_normal_audit = end_tangent_audit.unitize().unwrap_or(Vec3::ZERO);
+    for edge_id in [
+        solidcore::topology::EdgeId::from_index(0),
+        solidcore::topology::EdgeId::from_index(2),
+        solidcore::topology::EdgeId::from_index(4),
+        solidcore::topology::EdgeId::from_index(6),
+    ] {
+        let curve = edge::curve(&brep, edge_id)
+            .expect("cap curve")
+            .expect("curve");
+        let interval = edge::interval(&brep, edge_id).expect("interval");
+        let mut start_dev = 0.0_f64;
+        let mut end_dev = 0.0_f64;
+        for index in 0..=16 {
+            let t = interval.evaluate(f64::from(index) / 16.0);
+            let point = curve.evaluate_point(&k, t).expect("cap point");
+            start_dev = start_dev.max(((point - start_origin).dot(start_normal_audit)).abs());
+            end_dev = end_dev.max(((point - end_origin).dot(end_normal_audit)).abs());
+        }
+        println!("CAP-PLANE edge={edge_id:?} start_plane_dev={start_dev:.9e} end_plane_dev={end_dev:.9e}");
+    }
+    println!("AUDIT-BREP tolerance={:?}", brep.tolerance());
+    for (edge_id, _) in brep.edges().iter() {
+        let edge_tol = edge::tolerance(&brep, edge_id).expect("edge tol");
+        if edge_tol <= 0.01 {
+            continue;
+        }
+        let curve = edge::curve(&brep, edge_id).expect("curve").expect("curve");
+        let interval = edge::interval(&brep, edge_id).expect("interval");
+        let curve_start = curve
+            .evaluate_point(&k, interval.min())
+            .expect("curve start");
+        let curve_end = curve.evaluate_point(&k, interval.max()).expect("curve end");
+        let (start_vertex, end_vertex) =
+            edge::start_end_vertices(&brep, edge_id).expect("endpoints");
+        let start_vertex_data = start_vertex.map(|v| {
+            let vertex = brep.vertex(v).expect("vertex");
+            (vertex.point, vertex.tolerance)
+        });
+        let end_vertex_data = end_vertex.map(|v| {
+            let vertex = brep.vertex(v).expect("vertex");
+            (vertex.point, vertex.tolerance)
+        });
+        let start_gap = start_vertex_data.map(|(point, _)| (point - curve_start).length());
+        let end_gap = end_vertex_data.map(|(point, _)| (point - curve_end).length());
+        println!("AUDIT-EDGE-TOL edge={edge_id:?} edge_tol={edge_tol:.9e} curve_start={curve_start:?} curve_end={curve_end:?} start_vertex={start_vertex_data:?} end_vertex={end_vertex_data:?} start_gap={start_gap:?} end_gap={end_gap:?}");
+    }
     audit_edge_uvs(&brep, &k, "before-check");
     match check_brep(&mut k, &mut brep, CheckLevel::Level0) {
         Ok(check) => {
@@ -798,6 +945,132 @@ fn arc_arc_uv_trim_audit() {
                     println!(
                         "UV-AUDIT face={face_id:?} loop={loopuse:?} index={index} edge={edge:?} orient={orient:?} edge3={e0:?}->{e1:?} uv={u0:?}->{u1:?} next3={n0:?} next_uv0={nu0:?} gap={gap:.9e}"
                     );
+                }
+            }
+        }
+    }
+}
+
+#[test]
+#[ignore = "open arc-arc still has a 3.5e-5 edge gap"]
+fn direct_joint_arc_arc_open() {
+    let path_a = arc(Point3::new(0.0, 1.0, 0.0), 1.0, -180.0, -90.0);
+    let path_b = arc(Point3::new(-1.0, 0.0, 0.0), 1.0, 0.0, 45.0);
+    run_joint_case(
+        "arc-arc-open",
+        &path_a,
+        &path_b,
+        0.25,
+        3.0 * std::f64::consts::FRAC_PI_4,
+        BoundaryStrategyKind::HybridAtJunction,
+        true,
+        false,
+        None,
+    );
+}
+
+#[test]
+#[ignore = "manual open arc-arc endpoint audit"]
+fn open_arc_arc_endpoint_audit() {
+    let path_a = arc(Point3::new(0.0, 1.0, 0.0), 1.0, -180.0, -90.0);
+    let path_b = arc(Point3::new(-1.0, 0.0, 0.0), 1.0, 0.0, 45.0);
+    let paths = [Curve::from(path_a.clone()), Curve::from(path_b.clone())];
+    let mut k = Kernel::default();
+    let frame = PathFrame::new(&k, &paths).expect("frame");
+    let profile_input = Curve::from(api_curves::create_circle(Point3::ZERO, 0.25).expect("circle"));
+    let normalized =
+        normalize_planar_sweep(&k, &[profile_input], &paths, true, 3).expect("normalize");
+    let boundary_profile =
+        to_bspline(&normalized.placements[0].world_profiles[0]).expect("placed profile");
+    let mut side_surfaces = Vec::with_capacity(2);
+    for placement in &normalized.placements {
+        let profile = to_bspline(&placement.world_profiles[0]).expect("profile");
+        let built = build_swept_surface(
+            &k,
+            &placement.path_piece,
+            &profile,
+            frame.normal,
+            &options(),
+        )
+        .expect("surface");
+        side_surfaces.push(built.surface);
+    }
+    let boundary = BoundarySolver::default()
+        .solve(&BoundaryInput {
+            kernel: &k,
+            frame,
+            profile: &boundary_profile,
+            path_a: &path_a,
+            path_b: &path_b,
+            extension: normalized.extension,
+            segments: 4,
+            samples_per_segment: 17,
+        })
+        .expect("boundary");
+    let (start, start_tangent) = endpoint(&path_a, false);
+    let (end, end_tangent) = endpoint(&path_b, true);
+    let mut brep = build_direct_chain(
+        &mut k,
+        &side_surfaces,
+        std::slice::from_ref(&boundary),
+        start,
+        start_tangent,
+        end,
+        end_tangent,
+        4,
+    )
+    .expect("direct chain");
+    match check_brep(&mut k, &mut brep, CheckLevel::Level0) {
+        Ok(check) => {
+            println!(
+                "OPEN-AUDIT check failures={} assert={:?}",
+                check.failures().count(),
+                check.assert_valid
+            );
+            for failure in check.failures() {
+                println!("OPEN-AUDIT failure {failure:?}");
+            }
+        }
+        Err(error) => println!("OPEN-AUDIT check ERR {error:?}"),
+    }
+    for (face_id, face) in brep.faces().iter() {
+        let Some(faceuse) = face.faceuse else {
+            continue;
+        };
+        let loopuses = brep.faceuse(faceuse).expect("faceuse").loopuses.clone();
+        for loopuse in loopuses {
+            let edgeuses = edgeuse1::loopuse_edgeuses(&brep, loopuse).expect("edgeuses");
+            let mut points = Vec::new();
+            for edgeuse in &edgeuses {
+                let edge = edgeuse1::edge(&brep, *edgeuse).expect("edge").expect("id");
+                let curve = edge::curve(&brep, edge).expect("curve").expect("curve");
+                let interval = edge::interval(&brep, edge).expect("interval");
+                let orient = edgeuse1::orientation(&brep, *edgeuse).expect("orientation");
+                let (from, to) =
+                    if orient == solidcore::nurbs::b_spline_surface_n_lib::p2::OrientType::Same {
+                        (
+                            curve.evaluate_point(&k, interval.min()).expect("start"),
+                            curve.evaluate_point(&k, interval.max()).expect("end"),
+                        )
+                    } else {
+                        (
+                            curve.evaluate_point(&k, interval.max()).expect("start"),
+                            curve.evaluate_point(&k, interval.min()).expect("end"),
+                        )
+                    };
+                points.push((edge, *edgeuse, from, to));
+            }
+            for index in 0..points.len() {
+                let next = (index + 1) % points.len();
+                let Some(current) = points.get(index) else {
+                    continue;
+                };
+                let Some(following) = points.get(next) else {
+                    continue;
+                };
+                let gap = (current.3 - following.2).length();
+                if gap > 1.0e-6 {
+                    println!("OPEN-GAP face={face_id:?} loop={loopuse:?} index={index} edge={:?} next={:?} gap={gap:.9e} current_end={:?} next_start={:?}", current.0, following.0, current.3, following.2);
                 }
             }
         }

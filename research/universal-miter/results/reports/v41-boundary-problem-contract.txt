@@ -1,0 +1,32 @@
+boundary problem contract
+=========================
+
+implemented
+- boundary::BoundaryProblem { input, surface_a, surface_b, domains, policy }
+- BoundaryStrategy::solve_problem with default delegation to solve
+- BoundarySolver::solve_problem
+- build_planar_sweep constructs one BoundaryProblem per joint
+- GeometryPolicy moved to boundary and re-exported by planar_pipeline
+- SelectedSweep carries GeometryProvenance (currently Original)
+
+unchanged
+- Exact Contract A
+- validate_joint_boundary
+- typed refusals
+- rail mathematics, direct builder, tolerances, arc-arc oracle
+
+policy tests
+- default ExactOnly: PASS
+- current provenance Original: PASS
+- AllowExtension/AllowAdaptiveBridge => StrategyNotImplemented: PASS
+
+pipeline tests
+- 7 passed, 0 ignored
+- exact line-line-line, exact line-arc-line, mixed Exact/LevelB: PASS
+- open arc-arc typed refusal: PASS
+
+remaining
+- SourceProvider registry
+- explicit strategy classification/registry (junction_samples still internal)
+- generated pieces/interfaces in PlanarSweepResult
+- architecture tests for adding providers/strategies without build_planar_sweep

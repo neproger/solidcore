@@ -1,0 +1,34 @@
+# Universal miter - Prepared boundary contract audit
+version: v21
+label: prepared-boundary-contract
+head: 28d6f6afc (research changes uncommitted)
+workspace: research/universal-miter (separate workspace; production untouched)
+
+ENDPOINTS
+
+  line-arc: original/prepared start and end coincide.
+  arc-arc:
+    original start=(-1,1,0)
+    prepared start=(-1.0000000000,1.7071067812,0)
+    original end=(-1,1,0)
+    prepared end=(-1.7071067812,1.0000000000,0)
+
+CAP PLANE DEVIATION
+
+  line-arc: 1.5e-17 / 8.1e-17
+  arc-arc: 0.7071067812 / 0.7071067812
+  assigned tolerance: 1.4142135624 = 2 * 0.7071
+
+CONTRACT
+
+  Side surface uses NormalizedPlacement::path_piece (prepared boundary).
+  Cap plane uses original path_start/path_end.
+  line-arc passes because they coincide; arc-arc fails because they differ
+  by 0.7071.
+
+STATUS
+
+  Arc-arc direct B-rep: BLOCKED.
+  Next: prove whether prepared boundary or original endpoint is the intended
+  final sweep boundary, expose that explicitly, then make cap and side use it.
+  No tolerance/UV/geometry changes before that decision.

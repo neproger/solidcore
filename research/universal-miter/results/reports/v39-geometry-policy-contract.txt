@@ -1,0 +1,25 @@
+geometry policy and provenance contract
+=======================================
+
+policy
+- GeometryPolicy::{ExactOnly, AllowExtension, AllowAdaptiveBridge}
+- ExactOnly is the default
+- build_planar_sweep remains ExactOnly wrapper
+- build_planar_sweep_with_policy is the explicit policy entry point
+- non-Exact policies return StrategyNotImplemented(policy); no fallback
+
+provenance
+- GeometryProvenance::{Original, Extension, Bridge}
+- SelectedSweep carries provenance
+- current sources are all Original
+- PlanarSweepResult carries geometry_policy
+- generated pieces/interfaces not implemented yet
+
+contract tests
+- default policy = ExactOnly: PASS
+- current provenance = Original: PASS
+- open arc-arc AllowExtension = StrategyNotImplemented: PASS
+- open arc-arc AllowAdaptiveBridge = StrategyNotImplemented: PASS
+- existing exact line-arc test remains green
+
+no solver/builder/validator/tolerance changes

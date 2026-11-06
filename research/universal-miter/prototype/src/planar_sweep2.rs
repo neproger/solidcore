@@ -12,7 +12,7 @@ use solidcore::geom::axis2_placement::Axis2Placement;
 use solidcore::geom::extent3d::Extent3d;
 use solidcore::geom::tol::ZONE_TOL_3D;
 use solidcore::kernel::Kernel;
-use solidcore::math::{Point3, Vec3, EFF_ZERO, EFF_ZERO_SQRT};
+use solidcore::math::{EFF_ZERO, EFF_ZERO_SQRT, Point3, Vec3};
 use solidcore::nurbs::b_spline_curve::p1::BSplineCurve;
 use solidcore::nurbs::b_spline_curve::p2::BoundingBoxRequest;
 use solidcore::primitive::primitive_creation::p1::extend_path_curves_with_kernel;

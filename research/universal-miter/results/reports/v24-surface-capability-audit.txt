@@ -1,0 +1,41 @@
+surface capability audit
+========================
+
+test: crates/solidcore/tests/surface_capability_audit.rs
+command: cargo test -p solidcore --test surface_capability_audit -- --nocapture
+
+analytic creation + NURB conversion + split_at (17x17 grid, full piece domains)
+plane        U left 1.9860273225978185e-15   U right 2.5121479338940403e-15
+plane        V left 1.9860273225978185e-15   V right 3.66205343881779e-15
+cylinder     U left 2.737549743767154e-15    U right 2.1065000811460206e-15
+cylinder     V left 1.709166621382058e-15    V right 3.580361673049448e-15
+torus        U left 0                        U right 0
+torus        V left 0                        V right 0
+extrusion    U left 1.831026719408895e-15    U right 1.0175362097255202e-15
+extrusion    V left 9.992007221626409e-16    V right 1.831026719408895e-15
+revolution   U left 0                        U right 0
+revolution   V left 1.368774871883577e-15    V right 6.661338147750939e-16
+
+result: split pieces are SurfaceKind::BSpline (rational NURBS) and match the
+original analytic surface to <= 3.67e-15.
+
+face creation
+make_face_with_curves creates one-loop faces directly on each analytic Surface and
+keeps the analytic kind:
+  plane        FaceId(0)
+  cylinder     FaceId(0)
+  torus        FaceId(0)
+  extrusion    FaceId(0)
+  revolution   FaceId(0)
+It also creates one-loop faces from both split NURB halves of each surface; those
+faces keep SurfaceKind::BSpline.
+
+A detached face fails check_brep structurally (missing shell/face owner/UV trim
+owner), so the fixture does not prove complete B-rep validity.
+
+complete-body control
+create_cylinder -> faces ["Cylinder", "Plane", "Plane"]
+check_brep Level2 -> valid, 0 failures
+
+conclusion
+exact analytic split path is accepted; Direct B-rep Builder should take Surface.

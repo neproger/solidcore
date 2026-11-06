@@ -1,0 +1,63 @@
+attempted exact torus source alignment
+=====================================
+
+change attempted
+- all-arc source path derives a profile at the original path start by translating
+  the placement profile from the prepared start
+- pipeline boundary uses the source profile
+
+results
+line-arc-line exact: PASS
+line-arc-line mixed LevelB: PASS
+open arc-arc: still BLOCKED
+
+open arc-arc seam gaps after attempted alignment
+piece 0: 2.500e-1
+piece 1: 2.500e-1
+
+boundary solver unchanged
+strategy=HybridAtJunction exact=36 junction=32 residual=1.284e-13
+
+conclusion
+profile translation alone is not enough. The source Torus generator still needs
+its orientation / angular parameterisation aligned with the profile and original
+arc frame.
+
+no changes
+- Boundary Solver
+- Direct B-rep Builder
+- tolerances
+- high_level_open_arc_arc remains ignored
+
+regressions
+source_selection: 3 passed
+high-level exact line-arc, mixed exact/LevelB: pass
+clippy --tests -D warnings: clean
+rustfmt --check: clean
+
+source section audit after translation
+- piece 0 start/end section centers match original path points
+- piece 1 start/end section centers match original path points
+- section min/max radius = 0.250000 on both sections
+
+conclusion update
+profile position is now correct; the remaining 0.25 seam gap is not a center
+position error. The next audit must compare indexed profile points against the
+Torus U=0/U=1 sections and the seam point correspondence, including V direction
+and orientation.
+
+
+indexed profile-vs-section audit
+piece 0 U=0: best_error=2.29e-16 shift=0 reverse=false
+piece 0 U=1: best_error=2.31e-16 shift=0 reverse=false
+piece 1 U=0: best_error=6.21e-17 shift=0 reverse=false
+piece 1 U=1: best_error=2.08e-16 shift=0 reverse=false
+
+seam vertex nearest source-section distance
+vertex 1: 3.29e-16
+vertex 2: 3.31e-1
+vertex 3: 3.29e-16
+vertex 4: 2.50e-1
+
+The exact Torus sections are correct. The remaining failure is seam correspondence / extension coverage, not Torus generator orientation or V order.
+

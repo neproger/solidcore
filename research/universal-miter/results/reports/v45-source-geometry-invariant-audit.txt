@@ -1,0 +1,24 @@
+source geometry invariant audit + consumer migration
+====================================================
+
+proven
+- SourceGeometry domains are the actual object domains
+- provider coverage/correspondence declared and tested
+- validator uses SourceGeometry.surface
+- Direct builder uses SourceGeometry.surface
+- cap path frames use SourceGeometry::path_ends
+- BoundaryInput.profile supplied from SourceGeometry.profile in the pipeline
+- BoundaryInput.path_a/b documented as original path only; SourceGeometry.path
+  may be extended and has no implied parameter map
+
+remaining
+- SelectedSweep still stores legacy convenience fields alongside geometry()
+- BoundaryInput.path_a/b remain a separate original-path input (explicit)
+- no negative test yet for extended source + original-only input
+- BoundaryClassification / BoundaryStrategyRegistry not started
+
+verification
+- planar_pipeline: 7 passed
+- source_selection: 3 passed
+- clippy --tests -D warnings: clean
+- rustfmt --check: clean

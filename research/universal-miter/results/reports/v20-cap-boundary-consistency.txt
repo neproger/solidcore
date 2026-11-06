@@ -1,0 +1,36 @@
+# Universal miter - Cap boundary consistency audit
+version: v20
+label: cap-boundary-consistency
+head: 28d6f6afc (research changes uncommitted)
+workspace: research/universal-miter (separate workspace; production untouched)
+
+MEASUREMENTS
+
+  line-arc:
+    original start=(0,0,0)   prepared start=(0,0,0)
+    original end=(0,1,0)     prepared end=(0,1,0)
+    cap-plane deviations = 1.5e-17 / 8.1e-17
+
+  arc-arc:
+    original start=(-1,1,0)
+    prepared start=(-1.0000000000, 1.7071067812, 0)
+    original end=(-1,1,0)
+    prepared end=(-1.7071067812, 1.0000000000, 0)
+    cap-plane deviations = 0.7071067812 / 0.7071067812
+
+ROOT CAUSE
+
+  Side surfaces are built over NormalizedPlacement::path_piece. Cap planes are
+  built from the original path_start/path_end. Arc-arc prepared endpoints are
+  offset by 0.7071067812, so cap profile edges from the side-surface U boundary
+  do not lie on the cap plane. This explains the tolerance 1.4142135624
+  (2 * 0.7071) without any endpoint mismatch or periodic UV branch.
+
+  line-arc passes because prepared and original endpoints coincide.
+
+STATUS
+
+  Direct arc-arc B-rep: BLOCKED.
+  Next: decide whether the prepared boundary or the original path endpoint is
+  the intended cap boundary, then make cap plane and cap profile edges use the
+  same one. Do not adjust tolerances.

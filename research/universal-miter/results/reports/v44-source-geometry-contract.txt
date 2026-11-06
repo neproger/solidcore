@@ -1,0 +1,34 @@
+source geometry contract
+========================
+
+implemented
+- SourceGeometry { surface, path, path_domain, profile, profile_domain,
+  surface_domain, coverage, provenance, path_correspondence }
+- SourceCoverage::{OriginalOnly, WithExtension}
+- PathCorrespondence::{Identity, Independent}
+- SelectedSweep::geometry() coherent view
+- BoundaryProblem now references source_a/source_b SourceGeometry instead of
+  independent surface/domain fields
+- high-level pipeline builds both geometry views before solving
+
+provider coverage
+- Exact Revolution: OriginalOnly + Identity
+- Exact Extrusion: WithExtension + Independent
+- Level B: WithExtension + Independent
+
+contract tests
+- surface/profile/path domains match actual objects
+- provenance Original
+- coverage/correspondence per provider
+- source_selection: 3 passed
+
+pipeline
+- exact line-arc-line: PASS
+- open arc-arc typed refusal: PASS
+- no solver/builder/validator/tolerance changes
+
+caveats
+- SelectedSweep still retains legacy convenience fields alongside geometry
+- BoundarySolver still uses BoundaryInput for rail math
+- BoundaryStrategyRegistry / generated pieces / public registry injection
+  remain unimplemented

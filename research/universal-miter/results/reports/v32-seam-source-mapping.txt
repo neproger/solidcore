@@ -1,0 +1,39 @@
+seam-to-source mapping audit
+============================
+
+test: research/universal-miter/prototype/tests/planar_pipeline.rs
+test name: open_arc_arc_source_boundary_audit
+
+source geometry
+indexed profile-vs-section best errors:
+  piece 0 U0 2.29e-16 shift=0 reverse=false
+  piece 0 U1 2.31e-16 shift=0 reverse=false
+  piece 1 U0 6.21e-17 shift=0 reverse=false
+  piece 1 U1 2.08e-16 shift=0 reverse=false
+
+boundary
+HybridAtJunction exact=36 junction=32 residual=1.284e-13
+
+seam vertex mapping
+vertex 0:
+  piece0 U=1.000 V=0.000 gap=3.29e-16 in_domain=true
+  piece1 U=0.000 V=0.000 gap=6.50e-17 in_domain=true
+vertex 1:
+  piece0 U=0.707 V=0.250 gap=2.22e-16 in_domain=true
+  piece1 U=0.566 V=0.250 gap=2.00e-16 in_domain=true
+vertex 2:
+  piece0 U=1.000 V=0.500 gap=3.29e-16 in_domain=true
+  piece1 U=0.000 V=0.500 gap=6.50e-17 in_domain=true
+vertex 3:
+  piece0 U=1.000 V=0.750 gap=2.50e-1 in_domain=true
+  piece1 U=0.000 V=0.750 gap=2.50e-1 in_domain=true
+
+conclusion
+The failing point is inside both U/V domains. It is not an extension or
+U-coverage issue. Only the V=0.75 seam vertex does not lie on the source
+surfaces; the Torus sections and indexed profile correspondence already pass.
+
+next
+Trace Boundary Solver's V=0.75 seam vertex against the source profile point at
+the same index/alpha. Do not change arc_sweep_surface, Boundary Solver residual,
+Direct builder or tolerance.

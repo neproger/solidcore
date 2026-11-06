@@ -16,8 +16,8 @@
 
 use core::fmt;
 
-use solidcore::curve::curve::p3::compute_crvs_normal;
 use solidcore::curve::curve::Curve;
+use solidcore::curve::curve::p3::compute_crvs_normal;
 use solidcore::error::SolidError;
 use solidcore::kernel::Kernel;
 use solidcore::math::{Point3, Vec3};
@@ -26,7 +26,8 @@ use solidcore::nurbs::crv_fit::p1::ParamMethod;
 
 use crate::curve::GeometryError;
 use crate::level_b_geometry::KernelCurve;
-use crate::rail_solver::{solve_sequence, Piece, PieceSegment, RailSolution, RailSolveError};
+use crate::rail_solver::{Piece, PieceSegment, RailSolution, RailSolveError, solve_sequence};
+use crate::source_selection::SourceGeometry;
 
 /// The local path-plane frame.
 #[derive(Clone, Copy, Debug)]
@@ -90,10 +91,18 @@ pub struct BoundaryInput<'a> {
     /// The path-plane frame.
     pub frame: PathFrame,
     /// The placed profile at the first segment start.
+    ///
+    /// The pipeline supplies this from `SourceGeometry.profile`; it is not a
+    /// second independently chosen profile.
     pub profile: &'a BSplineCurve,
-    /// The first segment (original path).
+    /// The first segment of the original path, used only for rail extension.
+    ///
+    /// This is not the declared `SourceGeometry.path`; when a source has
+    /// `WithExtension`, its source path is the prepared extended path.
     pub path_a: &'a BSplineCurve,
-    /// The second segment (original path).
+    /// The second segment of the original path, used only for rail extension.
+    ///
+    /// This is not the declared `SourceGeometry.path`; see [`Self::path_a`].
     pub path_b: &'a BSplineCurve,
     /// The G1 extension used by the Level A pieces.
     pub extension: f64,
@@ -101,6 +110,39 @@ pub struct BoundaryInput<'a> {
     pub segments: usize,
     /// Samples per profile segment.
     pub samples_per_segment: usize,
+}
+
+/// The user-selected policy for generated geometry.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum GeometryPolicy {
+    /// Original bounded geometry only; default.
+    #[default]
+    ExactOnly,
+    /// Generated extension geometry is allowed.
+    AllowExtension,
+    /// Generated bridge/cut geometry is allowed.
+    AllowAdaptiveBridge,
+}
+
+/// The complete mathematical input of a joint boundary problem.
+///
+/// Strategies receive this one structure. `input` remains the 2D rail/profile
+/// data used by the current solver; the source surfaces and their domains are
+/// the bounded geometry the result must belong to.
+///
+/// `input.path_a` / `input.path_b` are the original paths only. For sources
+/// with `SourceCoverage::WithExtension`, `source_a.path` / `source_b.path` are
+/// the prepared extended paths. There is no implied parameter map between the
+/// two; a strategy that needs one must obtain it explicitly or refuse.
+pub struct BoundaryProblem<'a> {
+    /// The rail/profile input.
+    pub input: BoundaryInput<'a>,
+    /// The first coherent source geometry.
+    pub source_a: &'a SourceGeometry<'a>,
+    /// The second coherent source geometry.
+    pub source_b: &'a SourceGeometry<'a>,
+    /// Policy for generated geometry.
+    pub policy: GeometryPolicy,
 }
 
 /// A strategy identifier.
@@ -217,6 +259,18 @@ pub trait BoundaryStrategy {
     /// [`BoundaryError`] when the strategy is not applicable or the geometry is
     /// invalid.
     fn solve(&self, input: &BoundaryInput<'_>) -> Result<JointBoundary, BoundaryError>;
+
+    /// Solve the common [`BoundaryProblem`] contract.
+    ///
+    /// The default keeps the existing strategies source-agnostic; future
+    /// strategies can override it to use the source surfaces and policy.
+    ///
+    /// # Errors
+    ///
+    /// Those of [`BoundaryStrategy::solve`].
+    fn solve_problem(&self, problem: &BoundaryProblem<'_>) -> Result<JointBoundary, BoundaryError> {
+        self.solve(&problem.input)
+    }
 }
 
 /// The exact analytical miter strategy.
@@ -510,5 +564,17 @@ impl BoundarySolver {
             BoundaryStrategyKind::ExactMiter
         };
         build_boundary(input, &solved, strategy)
+    }
+
+    /// Solve from the common [`BoundaryProblem`] contract.
+    ///
+    /// # Errors
+    ///
+    /// Those of [`BoundarySolver::solve`].
+    pub fn solve_problem(
+        &self,
+        problem: &BoundaryProblem<'_>,
+    ) -> Result<JointBoundary, BoundaryError> {
+        self.solve(&problem.input)
     }
 }

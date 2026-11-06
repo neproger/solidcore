@@ -1,0 +1,39 @@
+arc-arc miter specification
+===========================
+
+contract A fixed
+- seam must lie on both bounded source surfaces and inside both UV domains
+- boundary_validation::validate_joint_boundary is the independent gate
+
+oracle results
+exact line-arc-line:       68 samples, max_gap=7.136e-8, PASS
+mixed Exact/LevelB:        68 samples, max_gap=1.320e-6, PASS
+open arc-arc candidate:    SurfaceMembershipFailure, gap=2.50e-1, REJECTED
+
+arc-arc miter math
+- exact sweep at fixed profile angle theta is a circle:
+  rho(theta)=R +/- r*cos(theta), same arc center
+- valid seam is the same-theta intersection of the two offset circles,
+  restricted to both original arc domains
+- generic Torus/Torus intersection is not sufficient (spurious profile-phase
+  branches)
+- no point in both original domains => UncoveredProfile; no tangent extension
+
+status
+- ExactMiter/HybridAtJunction unchanged
+- open arc-arc remains ignored
+- next: independent analytic circle-circle oracle, then ArcArcMiter spec/impl
+
+independent arc-arc circle oracle
+samples=68
+missing_intersections=0
+outside_both_original_arc_domains=33
+multiple_branches=0
+branch_discontinuities=0
+first_outside_sample=35
+
+conclusion
+The open arc-arc case has no continuous same-theta common boundary on the
+original bounded arcs. Under contract A, ArcArcMiter must refuse; it cannot use
+tangent extension.
+

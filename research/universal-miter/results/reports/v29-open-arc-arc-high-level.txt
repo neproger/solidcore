@@ -1,0 +1,37 @@
+open arc-arc through high-level planarsweep2
+============================================
+
+input
+path A: center (0,1) r=1, -180..-90 deg
+path B: center (-1,0) r=1, 0..45 deg
+profile: circle r=0.25, segments=4
+
+source selection
+piece 0: ExactRevolution, Torus
+piece 1: ExactRevolution, Torus
+domains: U=[0,1], V=[0,1] both pieces
+
+boundary solver
+strategy=HybridAtJunction
+exact=36 junction=32 residual=1.284e-13
+
+chain result
+PlanarSweepError::Chain(
+  InvalidInput { reason: "the seam point is not on the side surface" }
+)
+
+seam-to-surface gap
+piece 0: 2.500e-1
+piece 1: 4.591e-1
+
+localisation
+- source selection: PASS
+- boundary solver: PASS
+- direct topology: refused before assembly because the seam is not on the side
+  surfaces
+- suspected region: exact Torus profile placement / U-V seam mapping
+- no tolerance or boundary-strategy changes
+
+test state
+high_level_open_arc_arc: ignored with the finding
+open_arc_arc_source_boundary_audit: runnable diagnostic

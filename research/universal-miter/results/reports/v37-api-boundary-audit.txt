@@ -1,0 +1,31 @@
+api boundary audit
+==================
+
+high-level validated API
+- planar_pipeline::build_planar_sweep
+- PlanarSweepResult created only here
+- PlanarSweepError preserves stage + BoundaryValidationError fields
+
+public acceptance gate
+- boundary_validation::validate_joint_boundary
+
+prototype low-level API (explicitly documented)
+- direct_brep::*
+- boundary::BoundarySolver
+- source_selection::select_sweep_sources
+- exact_geometry, level_b_geometry, planar_sweep2
+
+external reachability
+- all public modules are reachable by external crates with feature solidcore
+- no pub(crate) firewall in this research crate
+- low-level direct_brep bypass is accepted for prototype only; callers own
+  source/boundary correctness
+
+verified invariants
+- every JointBoundary validated before build_direct_chain_surfaces
+- open arc-arc returns exact SurfaceMembershipFailure fields, not Chain
+- positive Torus/Extrusion/BSpline cases pass
+
+no solver/builder/tolerance changes
+clippy --tests -D warnings: clean
+rustfmt --check: clean

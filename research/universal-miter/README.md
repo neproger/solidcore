@@ -67,7 +67,11 @@ research/universal-miter/
 │   ├── 21-arc-arc-direct-blocked.md
 │   ├── 22-arc-arc-geometric-consistency-audit.md
 │   ├── 23-arc-arc-uv-trim-audit.md
-│   └── 24-direct-brep-architecture-audit.md
+│   ├── 24-direct-brep-architecture-audit.md
+│   ├── 25-cap-boundary-consistency-audit.md
+│   ├── 26-prepared-boundary-contract-audit.md
+│   ├── 27-closed-path-cap-audit.md
+│   └── 28-open-arc-arc-endpoint-audit.md
 ├── prototype/
 │   ├── Cargo.toml
 │   ├── src/
@@ -103,7 +107,11 @@ research/universal-miter/
     ├── reports/v16-arc-arc-matrix-blocked.txt
     ├── reports/v17-arc-arc-geometric-consistency.txt
     ├── reports/v18-arc-arc-uv-trim-audit.txt
-    └── reports/v19-direct-brep-architecture-audit.txt
+    ├── reports/v19-direct-brep-architecture-audit.txt
+    ├── reports/v20-cap-boundary-consistency.txt
+    ├── reports/v21-prepared-boundary-contract.txt
+    ├── reports/v22-closed-path-cap-audit.txt
+    └── reports/v23-open-arc-arc-endpoint-audit.txt
 ```
 
 ## Milestones

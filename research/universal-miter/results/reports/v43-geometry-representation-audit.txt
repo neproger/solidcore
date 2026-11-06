@@ -1,0 +1,35 @@
+geometry representation audit
+=============================
+
+representations
+- kernel/original: caller curves, path_original
+- normalized/prepared: extended path_piece, local prepared.path/profiles
+- placement: world_profiles, rotation/path inverse data
+
+current consumers
+- Exact Revolution: path_original + original-start profile
+- Exact Extrusion: path_piece + world_profiles
+- Level B: path_piece + world_profiles
+- Boundary Solver: path_original -> B-spline + BoundaryProblem profile
+- caps: selected path endpoints + source surfaces
+
+findings
+- path_piece is extended; path_original is not. E.g. piece 0 original end
+  (0,0) vs prepared end (0.7071,0); piece 1 original start (0,0) vs prepared
+  start (0,-0.7071).
+- world_profiles and Exact Revolution's original-start profile are different
+  placement paths.
+- path_original <-> path_piece parameter correspondence is not represented by a
+  single map.
+- source coverage (original/prepared/extension) is not part of the source
+  contract passed to BoundaryProblem.
+
+required contract
+- SourceGeometry: surface, path, path_domain, profile, profile_domain,
+  coverage OriginalOnly|WithExtension, provenance
+- BoundaryProblem must carry that geometry, not implicit path/placement data
+- Boundary Solver must not mix original and prepared paths implicitly
+
+no code/geometry/solver/builder/tolerance changes
+tests remain as before; SourceProvider registry is implemented, geometry
+representation contract is not yet unified

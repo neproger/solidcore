@@ -1,0 +1,41 @@
+exact multi-surface chain
+=========================
+
+test: research/universal-miter/prototype/tests/direct_exact.rs
+command: cargo test --features solidcore --test direct_exact -- --nocapture
+
+new entry point
+build_direct_chain_surfaces(k, &[Surface], boundaries, ...)
+
+exact line-line-line
+surfaces: 3 x exact extrusion/cylinder
+faces=14 edges=28 vertices=16
+check_brep Level2: valid=true failures=[]
+volume=0.5890486341
+expected=0.5890486225
+relative=1.954e-8
+
+exact line-arc-line
+surfaces: exact line, exact partial torus, exact line
+joint seam gaps:
+  joint 0 left  7.136186224079667e-8
+  joint 0 right 7.136186224113673e-8
+  joint 1 left  7.136186645142153e-8
+  joint 1 right 7.136186592335407e-8
+faces=14 edges=28 vertices=16
+check_brep Level2: valid=true failures=[]
+manifold=true outward=true
+volume=3.430607280
+expected=3.430614370
+relative=2.067e-6 (mass integrator tolerance 1e-5)
+
+chain changes
+- actual profile V kept for splits/caps/rails
+- canonicalization only for the start/end comparison
+- endpoint split skipped at the closed-profile seam
+- old BSplineSurface entry point retained as a wrapper
+
+regressions
+direct_joint line-line, line-arc exact, line-arc hybrid: pass
+legacy direct_chain_line_line_line: pass
+single exact line/arc: pass

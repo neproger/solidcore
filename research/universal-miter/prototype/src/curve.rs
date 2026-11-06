@@ -10,7 +10,7 @@
 
 use core::fmt;
 
-use crate::differential_geometry::{add, cross, norm, rot90, scale, sub, unit, DifferentialData};
+use crate::differential_geometry::{DifferentialData, add, cross, norm, rot90, scale, sub, unit};
 
 /// A malformed curve or a degenerate point of it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

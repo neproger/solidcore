@@ -1,0 +1,52 @@
+extension surface vs adaptive cut/bridge
+========================================
+
+status: comparative mathematical specification only; no implementation
+
+shared questions
+1 admission conditions
+2 which original surfaces may change
+3 valid common boundary
+4 B-rep guarantees
+5 typed refusal conditions
+6 independent validator
+7 diagnostics/public API representation
+
+extension surface
+- original bounded surfaces preserved; extension surfaces are additional
+- tangent extension of an arc is not another Torus
+- seam must be validated against actual extension Surface objects
+- path domain extension and ownership must be explicit
+- risk: the result is no longer the original sweep unless user-visible
+
+adaptive cut/bridge
+- original surfaces preserved; trim domains change
+- bridge surface + two interfaces are explicit
+- each interface must satisfy contract A against the original source and bridge
+- documented bounds: miter length, path deviation, continuity
+- risk: geometrically valid but artificial transition geometry
+
+comparison
+- extension: simpler topology, higher source-semantics risk
+- adaptive: preserves source, higher topology and bridge-constraint risk
+- both need explicit ownership, diagnostics, typed refusal and independent oracle
+
+decision
+Do not implement both. Choose one only after defining the geometric change,
+user-visible guarantee, refusal envelope, oracle and public diagnostics.
+Typed refusal remains correct for the original bounded exact arc-arc case.
+
+no solver/builder/validator/tolerance changes
+
+geometry ownership and user intent
+- ExactOnly is the default; no automatic extension/bridge
+- extension/bridge geometry is generated, not relabeled as the original sweep
+- result diagnostics must include original vs generated pieces, interfaces and
+  strategy
+- exact policy remains selectable and returns typed refusal
+- validator must check actual original/generated Surface objects
+- oracle must verify policy/provenance consistency and that disabling the
+  policy returns refusal
+
+status: specification only; no implementation and no change to Exact Contract A
+

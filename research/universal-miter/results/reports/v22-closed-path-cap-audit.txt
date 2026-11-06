@@ -1,0 +1,39 @@
+# Universal miter - Closed-path cap audit
+version: v22
+label: closed-path-cap-audit
+head: 28d6f6afc (research changes uncommitted)
+workspace: research/universal-miter (separate workspace; production untouched)
+
+MEASUREMENTS
+
+  line-arc: closed=false
+    original/prepared endpoints coincide; cap-plane dev ~1e-17
+
+  arc-arc matrix pair: closed=true
+    original start/end = (-1,1,0)
+    prepared start=(-1.0000000000,1.7071067812,0)
+    prepared end=(-1.7071067812,1.0000000000,0)
+    cap-plane dev = 0.7071067812
+    assigned tolerance = 1.4142135624 = 2 * 0.7071
+
+ROOT CAUSE
+
+  The arc-arc matrix pair is a closed loop. normalize_planar_sweep sets
+  closed=true, extends the closure, and cap_start=cap_end=false.
+  build_direct_chain ignored the flag and built caps at the original endpoints.
+  The cap-plane mismatch is therefore an invalid cap on a closed path, not a
+  prepared/original boundary contract ambiguity.
+
+NEXT
+
+  1. Add an open arc-arc matrix case (start != end) for caps + joint.
+  2. Implement closed paths separately: no caps, closure joint between last
+     and first, shared closure seam.
+  3. Do not cap closed paths; do not change tolerances.
+
+OPEN ARC-ARC FOLLOW-UP
+
+  path_b end 45 degrees (open path), caps valid.
+  cap-plane mismatch and sqrt(2) tolerance inflation gone.
+  check_brep: 4 failures; first Edge/Edge Gap = 3.488e-5 > 2e-5.
+  Open test is ignored until this smaller gap is audited.

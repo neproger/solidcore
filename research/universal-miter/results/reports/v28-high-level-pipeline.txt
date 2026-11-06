@@ -1,0 +1,40 @@
+high-level planar sweep pipeline
+================================
+
+test: research/universal-miter/prototype/tests/planar_pipeline.rs
+command: cargo test --features solidcore --test planar_pipeline -- --nocapture
+
+pipeline
+normalize -> select_sweep_sources -> BoundarySolver -> build_direct_chain_surfaces
+result: PlanarSweepResult { brep, sources, boundaries }
+
+line-line-line, circle
+sources: ExactExtrusion / ExactExtrusion / ExactExtrusion
+faces=14 edges=28 vertices=16
+check_brep Level2 valid=true, failures=[]
+manifold=true outward=true
+
+line-arc-line, circle
+sources: ExactExtrusion / ExactRevolution / ExactExtrusion
+surfaces: SurfOfExtrusion / Torus / SurfOfExtrusion
+faces=14 edges=28 vertices=16
+check_brep Level2 valid=true, failures=[]
+manifold=true outward=true
+
+line-arc-line, ellipse
+sources: ExactExtrusion / LevelBApproximation / ExactExtrusion
+middle diagnostics: path_kind=CircleArc, circular_profile=false
+surfaces: SurfOfExtrusion / BSpline / SurfOfExtrusion
+faces=14 edges=28 vertices=16
+check_brep Level2 valid=true, failures=[]
+manifold=true outward=true
+
+boundaries
+existing Boundary Solver; no strategy retry
+open arc-arc and closed-path logic untouched
+no tolerance changes
+
+checks
+3 tests passed
+clippy --tests -D warnings: clean
+rustfmt --check: clean

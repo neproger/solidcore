@@ -33,3 +33,28 @@ workspace = true
 name = "direct_joint"
 path = "tests/direct_joint.rs"
 required-features = ["solidcore"]
+
+[[test]]
+name = "direct_exact"
+path = "tests/direct_exact.rs"
+required-features = ["solidcore"]
+
+[[test]]
+name = "source_selection"
+path = "tests/source_selection.rs"
+required-features = ["solidcore"]
+
+[[test]]
+name = "planar_pipeline"
+path = "tests/planar_pipeline.rs"
+required-features = ["solidcore"]
+
+[[test]]
+name = "torus_audit"
+path = "tests/torus_audit.rs"
+required-features = ["solidcore"]
+
+[[test]]
+name = "arc_arc_oracle"
+path = "tests/arc_arc_oracle.rs"
+required-features = ["solidcore"]

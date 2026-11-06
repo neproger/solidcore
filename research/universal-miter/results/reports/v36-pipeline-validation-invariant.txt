@@ -1,0 +1,32 @@
+high-level validation invariant audit
+=====================================
+
+result path
+- only build_planar_sweep constructs PlanarSweepResult
+- normalized_input and select_sweep_sources do not construct a B-rep
+- low-level direct_brep entry points remain prototype bypasses, not the
+  high-level PlanarSweep contract
+
+pipeline order
+normalize -> select sources -> solve boundaries -> validate boundaries ->
+build_direct_chain_surfaces
+
+error
+PlanarSweepError::BoundaryValidation(BoundaryValidationError)
+
+stable open arc-arc classification
+segment=2 sample=1 surface=0 gap=2.1086334742979336e-2
+SurfaceMembershipFailure
+
+negative test
+high_level_open_arc_arc_returns_typed_refusal: PASS (not ignored)
+does not return PlanarSweepError::Chain; builder is after validator
+
+positive tests
+exact line-line-line:    max_gap=8.854e-7   PASS
+exact line-arc-line:     max_gap=7.136e-8   PASS
+mixed Exact/LevelB:      max_gap=1.320e-6   PASS
+
+no solver/builder/tolerance changes
+clippy --tests -D warnings: clean
+rustfmt --check: clean

@@ -11,12 +11,12 @@ use solidcore::math::{Point2, Point3, Vec3};
 use solidcore::nurbs::b_spline_curve::p1::BSplineCurve;
 use solidcore::nurbs::b_spline_surface::{BSplineSurface, SurfParamType};
 use solidcore::nurbs::b_spline_surface_n_lib::p2::SkinnedSurfaceOptions;
+use solidcore::surface::surface::Surface;
 use solidcore::surface::surface::p4::NoObject;
 use solidcore::surface::surface::p5::DropPointOptions;
-use solidcore::surface::surface::Surface;
 
 use crate::curve::GeometryError;
-use crate::differential_geometry::{cross, norm, rot90, unit, DifferentialData};
+use crate::differential_geometry::{DifferentialData, cross, norm, rot90, unit};
 use crate::rail_solver::PlanarCurve;
 
 /// The real `solidcore` curve adapted to the Level A planar interface.

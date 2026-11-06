@@ -1,0 +1,27 @@
+source selection audit
+=======================
+
+test: research/universal-miter/prototype/tests/source_selection.rs
+command: cargo test --features solidcore --test source_selection -- --nocapture
+
+selection result
+line-line-line, circle        ExactExtrusion / ExactExtrusion / ExactExtrusion
+line-arc-line, circle         ExactExtrusion / ExactRevolution / ExactExtrusion
+line-unsupported-line, ellipse ExactExtrusion / LevelBApproximation / ExactExtrusion
+arc-line-arc, circle          ExactRevolution / ExactExtrusion / ExactRevolution
+
+built selected sources
+line-line-line                3 exact surfaces, domains non-empty
+line-arc-line                 3 surfaces: Exact / Exact / Exact
+arc-line-arc                  3 surfaces: Exact / Exact / Exact
+
+behavior
+- classification uses geometric is_linear/is_arc, not a build attempt
+- exact build failure is SourceSelectionError::ExactBuildFailed, never fallback
+- Level B build failure is SourceSelectionError::LevelBBuildFailed
+- boundary solver, open arc-arc and closed-path logic untouched
+- no tolerance changes
+
+tests: 3 passed
+clippy --tests -D warnings: clean
+rustfmt --check: clean

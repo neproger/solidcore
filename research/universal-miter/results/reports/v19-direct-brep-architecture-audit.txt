@@ -53,3 +53,19 @@ ADDENDUM: PATCH-SPLIT EXPERIMENT
   arc-arc direct: failures 11 -> 12; V gap 0.7499833 -> 0.25.
   Not green: the remaining 0.25 shows incomplete patch-local V mapping for
   rails/cap/seam. Next: audit the patch-local face loop.
+PATCH-LOCAL AUDIT
+
+  split_at keeps global V intervals:
+    patch 0..3 V = [0,.25], [.25,.500016702], [.500016702,.75], [.75,1]
+    U = [0,1] on all patches.
+  Side faces use patches, but rails and cap profile curves are still created
+  on the full surface with global v_min/v_max. Seam edges are shared 3D curves
+  projected independently. This is the remaining mixed parameterization.
+  Arc-arc V gap: .749983 -> .25; still not green.
+PATCH-LOCAL RAILS/CAPS
+
+  Rails and cap profile edges now use their patches; R0 uses the last patch
+  at v_max and keeps one shared 3D edge with local UV on P0/P3.
+  Result: arc-arc UV gap 0.25 gone. Remaining 10 failures start with
+  Edge tolerance relative to brep tolerance = 1.4142135623730947.
+  Line-line / line-arc / N=3 still pass.

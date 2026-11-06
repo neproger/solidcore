@@ -1,0 +1,54 @@
+torus source geometry audit
+===========================
+
+test: research/universal-miter/prototype/tests/torus_audit.rs
+command: cargo test --features solidcore --test torus_audit -- --nocapture
+
+inputs
+path A: center (0,1) r=1, -180..-90
+path B: center (-1,0) r=1, 0..45
+profile: circle r=0.25
+
+selected sources
+piece 0: ExactRevolution, Torus, U=[0,1], V=[0,1]
+piece 1: ExactRevolution, Torus, U=[0,1], V=[0,1]
+
+frame audit
+piece 0: original_start=(-1, 1, 0) prepared_start=(-1, 1, 0)
+         original_end=(0, 0, 0)   prepared_end=(0.7071, 0, 0)
+         world_profile_center=(-1, 1, 0)
+piece 1: original_start=(0, 0, 0) prepared_start=(0, -0.7071, 0)
+         original_end=(-0.2929, 0.7071, 0) prepared_end=(-0.2929, 0.7071, 0)
+         world_profile_center=(0, -0.7071, 0)
+
+source-vs-analytic audit
+piece 0: path_start=(-1, 1, 0)
+         profile_interval=[0,1]
+         max deviation 8.527e-1 at U=1, V=.75
+piece 1: path_start=(0, 0, 0)
+         profile_interval=[0,1]
+         max deviation 8.527e-1 at U=0, V=.75
+
+frame conclusion
+the Torus takes angle/frame data from the original path, while the profile comes
+from placement.world_profiles at the prepared path start. Piece 1 shows the
+mismatch directly: profile centre (0,-0.7071) versus original path start (0,0).
+
+independent seam drops
+piece 0: 2.500e-1
+piece 1: 4.591e-1
+
+boundary solver
+strategy=HybridAtJunction
+exact=36 junction=32 residual=1.284e-13
+
+conclusion
+The source Torus does not yet match the analytic sweep at the path ends, so the
+failure is localized to the exact source frame/profile placement before the
+Boundary Solver, UV trims or topology.
+
+no changes
+- Boundary Solver unchanged
+- Direct B-rep Builder unchanged
+- tolerances unchanged
+- no seam/UV correction added

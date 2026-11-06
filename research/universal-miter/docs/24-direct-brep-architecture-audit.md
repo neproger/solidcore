@@ -109,3 +109,50 @@ This confirms the architectural direction but is not the finished fix. The
 next step is to audit the patch-local face loop: each patch's V domain,
 rails at its two boundaries, and cap profile edge must use one local
 parameter interval.
+## 8. Patch-local audit result
+
+`Surface::split_at` preserves the global V interval; it does not normalize each
+patch to `[0,1]`. The actual side-surface patch domains are:
+
+| Piece | Patch | U | V |
+|---|---|---|---|
+| 0 | 0 | `[0,1]` | `[0, 0.25]` |
+| 0 | 1 | `[0,1]` | `[0.25, 0.500016702]` |
+| 0 | 2 | `[0,1]` | `[0.500016702, 0.75]` |
+| 0 | 3 | `[0,1]` | `[0.75, 1]` |
+| 1 | 0..3 | `[0,1]` | same intervals |
+
+The side faces now use these patches, but the **rail and cap profile curves**
+are still created with the full `surfaces[piece]` and global `v_min/v_max`:
+
+- rails: `rail_segment(..., &surfaces[piece], global_v, ...)`;
+- cap profile edges: `profile_segment(..., &surfaces[0/1], ..., global_v, ...)`;
+- seam edges: the shared 3D boundary curves, projected independently.
+
+This is the remaining mixed parameterization. The arc-arc V gap falls from
+`0.749983` to `0.25` because the face domain is local, but the rail/cap curves
+are still expressed in the full-surface V values. The `.25` is one patch
+interval.
+
+The next change must create or map the rail and cap curves in the patch's own
+V interval (and keep the seam curves shared as 3D topology). It is not enough to
+shift a UV curve after the fact.
+## 9. Patch-local rails/caps applied
+
+Rails and cap profile edges now use the relevant patch:
+
+- rail R1..R3 on the patch whose lower V boundary is the rail;
+- the closing rail R0 on the last patch at `v_max`, keeping one shared 3D
+  edge with a local UV representation on P0 and P3;
+- cap profile edges on the patch of their profile segment.
+
+Result:
+
+- arc-arc direct: UV gap `0.25` is gone; 10 failures remain and the first is
+  `Edge tolerance relative to brep tolerance = 1.4142135623730947`;
+- line-line, line-arc exact/hybrid and N=3 remain green;
+- no `if arc_arc`; Boundary Solver and Surface Builder unchanged.
+
+The remaining failure is no longer a periodic UV gap. It is an edge/vertex
+tolerance failure, so the next audit is the 3D endpoints and tolerances of the
+rails/caps/seam edges after the patch-local construction.

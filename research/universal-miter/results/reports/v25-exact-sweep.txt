@@ -1,0 +1,34 @@
+exact sweep: line + circular profile, arc + circular profile
+===========================================================
+
+test: research/universal-miter/prototype/tests/direct_exact.rs
+command: cargo test --features solidcore --test direct_exact -- --nocapture
+
+line + circular profile
+surface source: SurfOfExtrusion (swap_uv=true), exact rational NURBS
+faces=6 edges=12 vertices=8
+manifold=true outward=true
+check_brep Level2: valid=true failures=[]
+volume=0.39269914006043183
+expected=0.39269908169872414
+relative=1.486e-7 (mass integrator tolerance 1e-3)
+
+arc + circular profile
+surface source: Torus, major [0,90], minor [0,360], inside_out=true
+faces=6 edges=12 vertices=8
+manifold=true outward=true
+check_brep Level2: valid=true failures=[]
+volume=0.6168519173226139
+expected=0.6168502750680849
+relative=2.662e-6 (mass integrator tolerance 1e-3)
+
+consistency checks
+- all edge curve endpoints match their stored vertices within 1e-9 scale
+- expected face/edge/vertex counts
+- integrity check passes
+- no Level B surface in these cases
+- Direct builder entry point: build_direct_single_surface(Surface, ...)
+
+regressions
+direct_shell: 2 passed
+direct_joint: 7 passed, 4 ignored (existing arc-arc/open audits)

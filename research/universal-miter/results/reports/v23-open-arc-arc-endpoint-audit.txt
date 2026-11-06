@@ -1,0 +1,28 @@
+# Universal miter - Open arc-arc endpoint audit
+version: v23
+label: open-arc-arc-endpoint-audit
+head: 28d6f6afc (research changes uncommitted)
+workspace: research/universal-miter (separate workspace; production untouched)
+
+OPEN ARC-ARC (path_b ends at 45 degrees, closed=false)
+
+  check_brep: 4 failures, brep tolerance 2e-5
+  first: Edge/Edge Gap = 3.48811487814872e-5
+
+  FaceId(4) LoopuseId(9):
+    EdgeId(16) end = (-0.2928932188,0.7071067812,-0.25)
+    EdgeId(1) start = (-0.2929178835,0.7070821165,-0.2499999976)
+    gap = 3.488114878e-5
+
+    EdgeId(8) end = (0,~0,-0.25)
+    EdgeId(16) start = (3.488236577e-5,1.913872469e-7,-0.25)
+    gap = 3.488289081e-5
+
+  FaceId(0) LoopuseId(1):
+    EdgeId(12) end = (2.039375661e-7,3.963259978e-5,-0.25)
+    EdgeId(8) start = (0,~0,-0.25)
+    gap = 3.963312448e-5
+
+  No sqrt(2) tolerance inflation and no cap-plane mismatch in the open case.
+  Gaps are curve endpoints of adjacent loop edges, at cap/side junctions.
+  Shared-vertex consistency and UV trim endpoints are the next audit.

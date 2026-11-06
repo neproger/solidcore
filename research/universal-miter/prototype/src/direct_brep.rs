@@ -5,6 +5,11 @@
 //! wire edges and face topology. The chain builder shares one vertex/edge set
 //! per joint. No Boolean, trim or stitch is used.
 //!
+//! **Prototype low-level API.** These functions accept already-solved surfaces
+//! and boundaries and do not source-select or validate. The validated
+//! high-level path is [`crate::planar_pipeline::build_planar_sweep`]; callers of
+//! this module take responsibility for source/boundary correctness.
+//!
 //! Reference: AOIM direct topology (`make_shell_vertex` + `make_wire_edge` +
 //! `make_face_topology`).
 
@@ -20,11 +25,11 @@ use solidcore::nurbs::b_spline_surface::{BSplineSurface, SurfParamType};
 use solidcore::nurbs::b_spline_surface_n_lib::p2::OrientType;
 use solidcore::nurbs::crv_fit::p1::ParamMethod;
 use solidcore::surface::plane::Plane;
+use solidcore::surface::surface::Surface;
 use solidcore::surface::surface::p4::NoObject;
 use solidcore::surface::surface::p5::DropPointOptions;
-use solidcore::surface::surface::Surface;
 use solidcore::topology::brep::p1::{
-    reset_infinite_region, set_region_is_void_flags_for_nested_solids, SetRegionVoidType,
+    SetRegionVoidType, reset_infinite_region, set_region_is_void_flags_for_nested_solids,
 };
 use solidcore::topology::brep::p2::ArenaNotifyState;
 use solidcore::topology::brep::p3 as brep_p3;
@@ -191,20 +196,20 @@ fn surface_at(surfaces: &[Surface], index: usize) -> Result<Surface> {
         .ok_or_else(|| SolidError::invalid_input(OP, "missing surface patch"))
 }
 
-/// Build one direct shell for a single path piece.
+/// Build one direct shell for a single path piece from an exact analytic surface.
 ///
-/// `surface` is the Level B swept surface over the path. The path start/end
-/// points and tangents give the cap planes. `segments` is `K`, the number of
-/// profile contour segments.
+/// The surface's U is the sweep direction and V the profile; it may be analytic
+/// or an exact rational NURBS patch. The path start/end points and tangents give
+/// the cap planes. `segments` is `K`, the number of profile contour segments.
 ///
 /// # Errors
 ///
 /// Kernel errors from the surface split, vertex/edge/face creation, or the p6
 /// closure tail (other than the simple-prism split completion).
 #[allow(clippy::too_many_arguments)]
-pub fn build_direct_single(
+pub fn build_direct_single_surface(
     k: &mut Kernel,
-    surface: &BSplineSurface,
+    surface: &Surface,
     path_start: Point3,
     path_start_tangent: Vec3,
     path_end: Point3,
@@ -217,7 +222,7 @@ pub fn build_direct_single(
             "the profile needs at least two segments",
         ));
     }
-    let full = Surface::from(surface.clone());
+    let full = surface.clone();
     let domain = full.natural_uv_domain_with_nurb(k)?;
     let v_min = domain.min().y;
     let v_max = domain.max().y;
@@ -424,6 +429,35 @@ pub fn build_direct_single(
     })
 }
 
+/// Build one direct shell for a single path piece from a NURBS surface.
+///
+/// This is the retained Level B entry point; [`build_direct_single_surface`] is
+/// the exact/analytic path.
+///
+/// # Errors
+///
+/// Those of [`build_direct_single_surface`].
+#[allow(clippy::too_many_arguments)]
+pub fn build_direct_single(
+    k: &mut Kernel,
+    surface: &BSplineSurface,
+    path_start: Point3,
+    path_start_tangent: Vec3,
+    path_end: Point3,
+    path_end_tangent: Vec3,
+    segments: usize,
+) -> Result<DirectShell> {
+    build_direct_single_surface(
+        k,
+        &Surface::from(surface.clone()),
+        path_start,
+        path_start_tangent,
+        path_end,
+        path_end_tangent,
+        segments,
+    )
+}
+
 fn profile_segment(
     k: &Kernel,
     surface: &Surface,
@@ -500,11 +534,12 @@ pub fn build_direct_joint(
         segments,
     )
 }
-/// Build one direct shell for `N` path pieces and `N - 1` shared joints.
+/// Build one direct shell for `N` path pieces and `N - 1` shared joints from
+/// exact analytic or rational-NURBS side surfaces.
 ///
-/// The input is already solved geometry: one Level B side surface per piece,
-/// one [`JointBoundary`] per adjacent pair, and the path end caps. The builder
-/// does not know which boundary strategy produced the seams.
+/// The input is already solved geometry: one side surface per piece, one
+/// [`JointBoundary`] per adjacent pair, and the path end caps. The builder does
+/// not know whether a side surface came from an analytic source or Level B.
 ///
 /// Every joint owns one set of seam vertices and seam edges, shared by the two
 /// adjacent side surfaces. Every intermediate surface owns one rail per profile
@@ -517,9 +552,9 @@ pub fn build_direct_joint(
 /// adjacent surfaces, a profile V mismatch between the two ends of one
 /// surface, or kernel errors from the topology construction.
 #[allow(clippy::too_many_arguments)]
-pub fn build_direct_chain(
+pub fn build_direct_chain_surfaces(
     k: &mut Kernel,
-    side_surfaces: &[BSplineSurface],
+    side_surfaces: &[Surface],
     boundaries: &[JointBoundary],
     path_start: Point3,
     path_start_tangent: Vec3,
@@ -550,7 +585,7 @@ pub fn build_direct_chain(
         let surface = side_surfaces
             .first()
             .ok_or_else(|| SolidError::invalid_input(OP, "missing side surface"))?;
-        return Ok(build_direct_single(
+        return Ok(build_direct_single_surface(
             k,
             surface,
             path_start,
@@ -562,7 +597,7 @@ pub fn build_direct_chain(
         .brep);
     }
 
-    let surfaces: Vec<Surface> = side_surfaces.iter().cloned().map(Surface::from).collect();
+    let surfaces: Vec<Surface> = side_surfaces.to_vec();
     let domains = surfaces
         .iter()
         .map(|surface| surface.natural_uv_domain_with_nurb(k))
@@ -646,7 +681,7 @@ pub fn build_direct_chain(
                 ));
             }
         }
-        profile_v.push(canonical_start);
+        profile_v.push(start_v);
     }
 
     let mut patch_surfaces: Vec<Vec<Surface>> = Vec::with_capacity(piece_count);
@@ -656,11 +691,17 @@ pub fn build_direct_chain(
             .cloned()
             .ok_or_else(|| SolidError::invalid_input(OP, "missing side surface"))?;
         let mut patches = Vec::with_capacity(segments);
+        let lo = scalar_at(&v_min, piece)?;
+        let hi = scalar_at(&v_max, piece)?;
+        let epsilon = 1.0e-9 * (1.0 + lo.abs() + hi.abs());
         for profile in 1..segments {
             let split = *profile_v
                 .get(piece)
                 .and_then(|values| values.get(profile))
                 .ok_or_else(|| SolidError::invalid_input(OP, "missing profile split"))?;
+            if split <= lo + epsilon || split >= hi - epsilon {
+                continue;
+            }
             let (left, right) = remaining.split_at(k, split, SurfParamType::V)?;
             patches.push(left);
             remaining = right;
@@ -726,18 +767,30 @@ pub fn build_direct_chain(
                     .map(|uv| &uv.0)
                     .ok_or_else(|| SolidError::invalid_input(OP, "missing seam U"))?
             };
-            let v = *profile_v
+            let (rail_patch, rail_v) = if profile == 0 {
+                (segments - 1, scalar_at(&v_max, piece)?)
+            } else {
+                (
+                    profile,
+                    *profile_v
+                        .get(piece)
+                        .and_then(|values| values.get(profile))
+                        .ok_or_else(|| SolidError::invalid_input(OP, "missing profile V"))?,
+                )
+            };
+            let rail_surface = patch_surfaces
                 .get(piece)
-                .and_then(|values| values.get(profile))
-                .ok_or_else(|| SolidError::invalid_input(OP, "missing profile V"))?;
+                .and_then(|patches| patches.get(rail_patch))
+                .ok_or_else(|| SolidError::invalid_input(OP, "missing rail patch"))?;
+            let rail_domain = rail_surface.natural_uv_domain_with_nurb(k)?;
             piece_rails.push(rail_segment(
                 k,
-                surface_row_at(&surfaces, piece)?,
-                v,
+                rail_surface,
+                rail_v,
                 u_start,
                 u_end,
-                scalar_at(&v_min, piece)?,
-                scalar_at(&v_max, piece)?,
+                rail_domain.min().y,
+                rail_domain.max().y,
             )?);
         }
         rails.push(piece_rails);
@@ -818,12 +871,17 @@ pub fn build_direct_chain(
 
     for profile in 0..segments {
         let next = (profile + 1) % segments;
+        let start_patch = patch_surfaces
+            .first()
+            .and_then(|patches| patches.get(profile))
+            .ok_or_else(|| SolidError::invalid_input(OP, "missing start cap patch"))?;
+        let start_domain = start_patch.natural_uv_domain_with_nurb(k)?;
         let start_curve = profile_segment(
             k,
-            surface_row_at(&surfaces, 0)?,
-            scalar_at(&u_min, 0)?,
-            scalar_at(&u_min, 0)?,
-            scalar_at(&u_max, 0)?,
+            start_patch,
+            start_domain.min().x,
+            start_domain.min().x,
+            start_domain.max().x,
             profile_v_at(&profile_v, 0, profile)?,
             if next == 0 {
                 scalar_at(&v_max, 0)?
@@ -842,12 +900,17 @@ pub fn build_direct_chain(
         )?);
 
         let last = piece_count - 1;
+        let end_patch = patch_surfaces
+            .get(last)
+            .and_then(|patches| patches.get(profile))
+            .ok_or_else(|| SolidError::invalid_input(OP, "missing end cap patch"))?;
+        let end_domain = end_patch.natural_uv_domain_with_nurb(k)?;
         let end_curve = profile_segment(
             k,
-            surface_row_at(&surfaces, last)?,
-            scalar_at(&u_max, last)?,
-            scalar_at(&u_min, last)?,
-            scalar_at(&u_max, last)?,
+            end_patch,
+            end_domain.max().x,
+            end_domain.min().x,
+            end_domain.max().x,
             profile_v_at(&profile_v, last, profile)?,
             if next == 0 {
                 scalar_at(&v_max, last)?
@@ -1033,6 +1096,38 @@ pub fn build_direct_chain(
     set_region_is_void_flags_for_nested_solids(k, &mut brep)?;
     brep.refresh_cached_topology();
     Ok(brep)
+}
+
+/// Build one direct shell for a chain of NURBS side surfaces.
+///
+/// This is the retained Level B entry point; [`build_direct_chain_surfaces`] is
+/// the exact/analytic path.
+///
+/// # Errors
+///
+/// Those of [`build_direct_chain_surfaces`].
+#[allow(clippy::too_many_arguments)]
+pub fn build_direct_chain(
+    k: &mut Kernel,
+    side_surfaces: &[BSplineSurface],
+    boundaries: &[JointBoundary],
+    path_start: Point3,
+    path_start_tangent: Vec3,
+    path_end: Point3,
+    path_end_tangent: Vec3,
+    segments: usize,
+) -> Result<Brep> {
+    let surfaces: Vec<Surface> = side_surfaces.iter().cloned().map(Surface::from).collect();
+    build_direct_chain_surfaces(
+        k,
+        &surfaces,
+        boundaries,
+        path_start,
+        path_start_tangent,
+        path_end,
+        path_end_tangent,
+        segments,
+    )
 }
 
 fn seam_uv_curve(

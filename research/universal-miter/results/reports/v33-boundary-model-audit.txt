@@ -1,0 +1,55 @@
+boundary solver mathematical model audit
+========================================
+
+status: audit only; no solver/builder/tolerance changes
+
+implemented model
+- one PathFrame and one placed profile at first segment start
+- rail system G(v,w,alpha)=0 in 2D
+- seam point = frame.lift(X(alpha)) + normal*beta
+- max_residual is the 2D rail residual, not distance to source surfaces
+- HybridAtJunction uses tangent extensions on missing side
+
+audit results
+- 3 of 4 seam vertices lie on both exact Torus surfaces (gap <= 2.2e-16)
+- vertex at V=.75 has gap 0.25 on both surfaces
+- all U/V projections are inside [0,1]
+- Torus indexed sections match source profile: best error 2e-16, shift 0,
+  reverse false on both ends of both pieces
+
+V=.75 evidence
+piece 0 source U=1 V=.75 = (0,-0.25,0), seam = (0.25,-0.25,0)
+piece 1 source U=0 V=.75 = (0.25,0,0), seam = (0.25,-0.25,0)
+
+conclusion
+HybridAtJunction's contract is defined on extended pieces. Exact Torus has no
+tangent extension beyond the original arc. The seam can therefore satisfy the
+2D rail system and still be outside the exact source surface. This is a contract
+mismatch, not a Torus parameterization failure.
+
+required oracle
+- sample seam including boundaries/closed profile
+- project every sample onto both source surfaces
+- require success, gap tolerance and U/V in domain
+- check continuity/endpoints and original-vs-extension origin
+- report first failing sample and piece
+
+decision required
+A. exact source only: HybridAtJunction refuses when seam leaves original domain
+B. extended source: provide an exact extension representation, or a separate
+   exact/Level B extension piece
+
+test state
+high_level_open_arc_arc remains ignored
+
+contract A fixed
+- valid seam must lie on both bounded source surfaces and inside both UV domains
+- independent validator: boundary_validation::validate_joint_boundary
+
+oracle results
+- exact line-arc-line: 68 samples, max_gap=7.136e-8, PASS
+- mixed exact/LevelB line-ellipse-line: 68 samples, max_gap=1.320e-6, PASS
+- open arc-arc candidate: SurfaceMembershipFailure gap=2.50e-1, rejected
+
+open arc-arc remains ignored; no solver/builder/tolerance change
+
